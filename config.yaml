@@ -1,0 +1,45 @@
+sources:
+  semantic_scholar:
+    api_key: ""          # optional — increases rate limits
+    base_url: "https://api.semanticscholar.org/graph/v1"
+    rate_limit_delay: 1.0
+    max_results_per_query: 100
+  openalex:
+    email: ""            # polite-pool identifier
+    base_url: "https://api.openalex.org"
+    max_results_per_query: 100
+
+filters:
+  require_abstract: true
+  require_doi: true
+  require_citation_count: true
+
+citation_floors:
+  pre_2015:
+    year_cutoff: 2015      # papers with year < 2015
+    min_citations: 500
+  mid_range:
+    year_from: 2015        # papers with 2015 <= year <= 2020
+    year_to: 2020
+    min_citations: 100
+  # papers after 2020: no floor
+
+evaluation:
+  weights:
+    semantic: 0.80      # cosine similarity between context and abstract
+    impact: 0.20        # log-normalized citation count
+  citation_ref: 300    # citations at which impact score reaches 1.0 (log scale saturates here)
+  thresholds:
+    min_semantic: 0.40  # semantic_score < this → descartado antes del score combinado
+    relevant: 0.50      # final_score >= this → relevante
+    potentially: 0.30   # final_score >= this → potencialmente_relevante
+    # below potentially → no_relevante
+
+storage:
+  projects_dir: "projects"
+
+embeddings:
+  model: "all-MiniLM-L6-v2"
+
+claude:
+  model: "claude-sonnet-4-6"   # used by claude_evaluator.py (not by generate_queries.py)

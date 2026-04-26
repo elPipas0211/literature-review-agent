@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Conda
+.conda/
+
+# Project runtime data (papers, embeddings, exports — never commit real data)
+projects/
+
+# Secrets and local config
+.env
+.env.*
+*.key
+
+# Runtime logs and PIDs
+.logs/
+*.pid
+
+# Frontend dependencies
+frontend/node_modules/
+
+# Claude Code local settings (contain machine-specific absolute paths)
+.claude/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
