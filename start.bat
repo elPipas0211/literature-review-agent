@@ -1,5 +1,5 @@
 @echo off
-:: start.bat — start backend (uvicorn :8000) and frontend (Vite :5173)
+:: start.bat — bootstrap if needed, then start backend (:8000) and frontend (:5173)
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 title Literature Review Agent
@@ -12,6 +12,53 @@ set FRONTEND_PORT=5173
 
 if not exist ".logs" mkdir .logs
 
+:: ── Prerequisites check ─────────────────────────────────────────────────────────
+where conda >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] conda not found.
+    echo         Install Miniconda from: https://docs.conda.io/en/latest/miniconda.html
+    exit /b 1
+)
+
+where node >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Node.js not found. Install v18+ from: https://nodejs.org
+    exit /b 1
+)
+
+where npm >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] npm not found. Install Node.js v18+ from: https://nodejs.org
+    exit /b 1
+)
+
+:: ── Bootstrap conda environment ─────────────────────────────────────────────────
+conda env list | findstr /B /C:"litreview " >nul 2>&1
+if errorlevel 1 (
+    echo Creating litreview conda environment (this may take several minutes^)...
+    call conda env create -f environment.yml
+    if errorlevel 1 (
+        echo [ERROR] Failed to create the conda environment.
+        exit /b 1
+    )
+    echo [OK] Conda environment 'litreview' ready.
+) else (
+    echo [OK] Conda environment 'litreview' already exists.
+)
+
+:: ── Bootstrap frontend dependencies ────────────────────────────────────────────
+if not exist "%ROOT%frontend\node_modules" (
+    echo Installing frontend dependencies...
+    cd "%ROOT%frontend"
+    call npm install
+    if errorlevel 1 (
+        echo [ERROR] npm install failed.
+        exit /b 1
+    )
+    cd /d "%ROOT%"
+    echo [OK] Frontend dependencies installed.
+)
+
 :: ── Kill any existing processes on these ports ─────────────────────────────────
 echo Checking for existing processes...
 for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr /R " 0\.0\.0\.0:%BACKEND_PORT% \|127\.0\.0\.1:%BACKEND_PORT% "') do (
@@ -22,15 +69,15 @@ for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr /R " 0\.0\.0\.0:%FRONT
 )
 
 :: ── Start backend in a new console window ─────────────────────────────────────
-:: /D sets the working directory of the new window directly, which is more
-:: reliable than cd-ing inside the command string (avoids quoting issues with
-:: paths that contain spaces).
 echo Starting backend on port %BACKEND_PORT%...
 start "LRA-Backend" /D "%ROOT%" cmd /k "conda activate litreview && uvicorn backend.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
 
 :: ── Start frontend in a new console window ────────────────────────────────────
-echo Starting frontend on port %FRONTEND_PORT%...
-start "LRA-Frontend" /D "%ROOT%frontend" cmd /k "npm run dev"
+if not exist "%SCRIPT_DIR%\frontend\node_modules" (
+    echo Installing frontend dependencies...
+    cd "%SCRIPT_DIR%\frontend"
+    npm install
+)
 
 :: ── Wait for servers to initialise ────────────────────────────────────────────
 timeout /t 4 /nobreak >nul
