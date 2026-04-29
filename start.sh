@@ -10,7 +10,7 @@ FRONTEND_PORT=5173
 LOG_DIR="$SCRIPT_DIR/.logs"
 mkdir -p "$LOG_DIR"
 
-# ── Prerequisites check ────────────────────────────────────────────────────────
+# ── Prerequisites ──────────────────────────────────────────────────────────────
 command -v conda &>/dev/null \
     || { echo "ERROR: conda not found. Install Miniconda: https://docs.conda.io/en/latest/miniconda.html"; exit 1; }
 command -v node &>/dev/null \
@@ -24,18 +24,18 @@ CONDA_BASE=$(conda info --base 2>/dev/null)
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 
 if conda env list | grep -q "^litreview "; then
-    echo "Conda environment 'litreview' already exists."
+    echo "[OK] Conda environment 'litreview' already exists."
 else
     echo "Creating conda environment 'litreview' (this may take a few minutes)..."
     conda env create -f environment.yml
-    echo "Conda environment 'litreview' ready."
+    echo "[OK] Conda environment 'litreview' ready."
 fi
 
 # ── Bootstrap frontend dependencies ───────────────────────────────────────────
 if [ ! -d "$SCRIPT_DIR/frontend/node_modules" ]; then
     echo "Installing frontend dependencies..."
     (cd "$SCRIPT_DIR/frontend" && npm install)
-    echo "Frontend dependencies installed."
+    echo "[OK] Frontend dependencies installed."
 fi
 
 # ── Activate conda environment ─────────────────────────────────────────────────
@@ -68,12 +68,8 @@ echo $! > "$LOG_DIR/backend.pid"
 
 # ── Start frontend ─────────────────────────────────────────────────────────────
 echo "Starting frontend on port $FRONTEND_PORT..."
-cd "$SCRIPT_DIR/frontend"
-if [ ! -d "node_modules" ]; then
-    echo "Installing frontend dependencies..."
-    npm install
-fi
-npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
+(cd "$SCRIPT_DIR/frontend" && npm run dev) > "$LOG_DIR/frontend.log" 2>&1 &
+echo $! > "$LOG_DIR/frontend.pid"
 
 sleep 2
 

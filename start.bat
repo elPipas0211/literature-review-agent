@@ -12,7 +12,7 @@ set FRONTEND_PORT=5173
 
 if not exist ".logs" mkdir .logs
 
-:: ── Prerequisites check ─────────────────────────────────────────────────────────
+:: ── Prerequisites ───────────────────────────────────────────────────────────────
 where conda >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] conda not found.
@@ -73,11 +73,8 @@ echo Starting backend on port %BACKEND_PORT%...
 start "LRA-Backend" /D "%ROOT%" cmd /k "conda activate litreview && uvicorn backend.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
 
 :: ── Start frontend in a new console window ────────────────────────────────────
-if not exist "%SCRIPT_DIR%\frontend\node_modules" (
-    echo Installing frontend dependencies...
-    cd "%SCRIPT_DIR%\frontend"
-    npm install
-)
+echo Starting frontend on port %FRONTEND_PORT%...
+start "LRA-Frontend" /D "%ROOT%frontend" cmd /k "npm run dev"
 
 :: ── Wait for servers to initialise ────────────────────────────────────────────
 timeout /t 4 /nobreak >nul
