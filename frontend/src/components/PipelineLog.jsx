@@ -1,57 +1,29 @@
 import { useEffect, useRef } from 'react'
 
-function logLine(event) {
+const SOURCE = { semantic_scholar: 'Semantic Scholar', openalex: 'OpenAlex' }
+const src = (s) => SOURCE[s] || s
+
+export function describe(event) {
   switch (event.type) {
-    case 'stage':       return { cls: 'log-line', text: `▸ ${event.message}` }
-    case 'fetch_start': return { cls: 'log-line fetch', text: `  Fetching from ${event.source}…` }
-    case 'fetch_done':
-      return {
-        cls: 'log-line fetch',
-        text: `  ${event.source}: ${event.retrieved} retrieved, ${event.passed} passed filter`,
-      }
-    case 'dedup':
-      return {
-        cls: 'log-line',
-        text: `  Dedup — DOI: ${event.doi}, title: ${event.title}, master: ${event.master} → ${event.remaining} remain`,
-      }
-    case 'floor':
-      return {
-        cls: event.remaining === 0 ? 'log-line warn' : 'log-line',
-        text: `  Citation floor: ${event.discarded} discarded, ${event.remaining} proceed`,
-      }
-    case 'eval_start':  return { cls: 'log-line', text: `  Evaluating ${event.count} papers semantically…` }
-    case 'eval_done': {
-      const rel = event.relevante || 0
-      const pot = event.potencialmente_relevante || 0
-      const disc = event.descartado_semantica || 0
-      return {
-        cls: 'log-line success',
-        text: `  Evaluation: ${rel} relevant, ${pot} potential, ${disc} discarded`,
-      }
-    }
-    case 'insert':
-      return {
-        cls: 'log-line success',
-        text: `  Inserted ${event.added} new papers (${event.skipped} already in DB)`,
-      }
-    case 'done':
-      return {
-        cls: 'log-line success',
-        text: `✓ Done — ${event.inserted} new papers added to master database`,
-      }
-    case 'error':
-      return { cls: 'log-line error', text: `✗ Error${event.source ? ` (${event.source})` : ''}: ${event.message}` }
-    default:
-      return { cls: 'log-line', text: JSON.stringify(event) }
+    case 'stage':       return ['log-line', `▸ ${event.message}`]
+    case 'fetch_start': return ['log-line fetch', `  Fetching from ${src(event.source)}…`]
+    case 'fetch_done':  return ['log-line fetch', `  ${src(event.source)}: ${event.retrieved} records`]
+    case 'wait':        return ['log-line warn', `  ${event.message}`]
+    case 'parse':       return ['log-line', `  Parsed ${event.rows} rows (${event.format?.toUpperCase()}), ${event.records} records with title`]
+    case 'dedup':       return ['log-line', `  ${event.identified} identified → ${event.within} duplicates merged, ${event.already} already in library → ${event.new} new`]
+    case 'context':     return ['log-line warn', `  Research context updated — rescoring all ${event.rescoring} papers`]
+    case 'embed':       return ['log-line', `  Embedding ${event.count} new papers…`]
+    case 'eval_done':   return ['log-line success', `  New papers: ${event.relevante || 0} relevant, ${event.potencialmente_relevante || 0} potential, ${event.no_relevante || 0} low`]
+    case 'done':        return ['log-line success', `✓ Done — ${event.added} added, ${event.already} already present, library now ${event.total}`]
+    case 'error':       return ['log-line error', `✗ Error${event.source ? ` (${src(event.source)})` : ''}: ${event.message}`]
+    case 'result':      return null
+    default:            return ['log-line', JSON.stringify(event)]
   }
 }
 
 export default function PipelineLog({ logs, isRunning }) {
   const bottomRef = useRef(null)
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, [logs])
 
   return (
     <div className="pipeline-log">
@@ -61,8 +33,8 @@ export default function PipelineLog({ logs, isRunning }) {
       </div>
       <div className="pipeline-log-body">
         {logs.map((event, i) => {
-          const { cls, text } = logLine(event)
-          return <span key={i} className={cls}>{text}</span>
+          const d = describe(event)
+          return d && <span key={i} className={d[0]}>{d[1]}</span>
         })}
         <div ref={bottomRef} />
       </div>

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getClusters, getPapers, getProjects, streamSearch } from './api/client.js'
+import {
+  getClusters, getConfig, getMeta, getPapers, getPrisma, getProjects, setContext, streamSearch,
+} from './api/client.js'
 
 import ImportModal   from './components/ImportModal.jsx'
 import Masthead      from './components/Masthead.jsx'
@@ -10,170 +12,181 @@ import SearchPanel   from './components/SearchPanel.jsx'
 import SemanticQuery from './components/SemanticQuery.jsx'
 import Sidebar       from './components/Sidebar.jsx'
 
-// ── Client-side re-evaluation ──────────────────────────────────────────────────
-// Mirrors embedding_evaluator.py: log1p(cites)/log1p(ref), weighted sum, thresholds.
-function recompute(papers, s) {
-  const wImp = 1 - s.weightSemantic
+// ── Client-side re-scoring ─────────────────────────────────────────────────────
+// Mirrors src/evaluation/scoring.py so weights/thresholds can be tuned live.
+// Nothing is ever removed: the category is only a label used for filtering.
+function recompute(papers, s, simRange) {
+  if (!s || !simRange) return papers
+  const [lo, hi] = simRange
   return papers.map((paper) => {
     const ev = paper.evaluation
-    if (!ev || ev.semantic_score == null) return paper   // not evaluated — keep as-is
-
-    const sem = ev.semantic_score
-    if (sem < s.minSemantic) {
-      return { ...paper, evaluation: { ...ev, score: sem, category: 'descartado_semantica' } }
-    }
-    const cites = Math.max(0, paper.citationCount || 0)
-    const ref   = Math.max(1, s.citationRef)
-    const imp   = Math.min(Math.log1p(cites) / Math.log1p(ref), 1.0)
-    const score = s.weightSemantic * sem + wImp * imp
-
+    if (!ev || ev.similarity == null) return paper
+    const sem = Math.min(1, Math.max(0, (ev.similarity - lo) / Math.max(hi - lo, 1e-9)))
+    const imp = Math.min(Math.log1p(Math.max(0, paper.citationCount || 0)) / Math.log1p(Math.max(1, s.citationRef)), 1)
+    const score = s.weightSemantic * sem + (1 - s.weightSemantic) * imp
     const category =
-      score >= s.thresholdRelevant  ? 'relevante'
+      score >= s.thresholdRelevant ? 'relevante'
       : score >= s.thresholdPotential ? 'potencialmente_relevante'
       : 'no_relevante'
-
     return {
       ...paper,
-      evaluation: {
-        ...ev,
-        score:        Math.round(score * 10000) / 10000,
-        impact_score: Math.round(imp   * 10000) / 10000,
-        category,
-      },
+      evaluation: { ...ev, semantic_score: sem, impact_score: imp, score, category },
     }
   })
 }
 
-const DEFAULT_SETTINGS = {
-  minSemantic:        0.40,
-  weightSemantic:     0.80,
-  citationRef:        300,
-  thresholdRelevant:  0.50,
-  thresholdPotential: 0.30,
+export function settingsFromConfig(ev) {
+  return {
+    weightSemantic:     ev.weights.semantic,
+    citationRef:        ev.citation_ref,
+    thresholdRelevant:  ev.thresholds.relevant,
+    thresholdPotential: ev.thresholds.potentially,
+  }
 }
 
-// ── App ────────────────────────────────────────────────────────────────────────
+const SORTERS = {
+  score:     (p) => p.evaluation?.score ?? -1,
+  citations: (p) => p.citationCount ?? -1,
+  year:      (p) => p.year ?? -1,
+}
+
 export default function App() {
+  const [evalConfig, setEvalConfig]         = useState(null)
+  const [filterSettings, setFilterSettings] = useState(null)
   const [projects, setProjects]             = useState([])
   const [project, setProject]               = useState('')
-  const [rawPapers, setRawPapers]           = useState([])      // from API
+  const [meta, setMeta]                     = useState(null)
+  const [rawPapers, setRawPapers]           = useState([])
   const [clusters, setClusters]             = useState(null)
+  const [prisma, setPrisma]                 = useState(null)
   const [activeCluster, setActiveCluster]   = useState(null)
-  const [categoryFilter, setCategoryFilter] = useState(null)    // null | 'relevante' | 'potencialmente_relevante'
+  const [categoryFilter, setCategoryFilter] = useState(null)
+  const [hideFlagged, setHideFlagged]       = useState(false)
+  const [textFilter, setTextFilter]         = useState('')
+  const [sortBy, setSortBy]                 = useState('score')
   const [selectedPaper, setSelectedPaper]   = useState(null)
   const [searchLogs, setSearchLogs]         = useState([])
   const [isSearching, setIsSearching]       = useState(false)
   const [activeTab, setActiveTab]           = useState('library')
   const [showImport, setShowImport]         = useState(false)
-  const [filterSettings, setFilterSettings] = useState(DEFAULT_SETTINGS)
   const searchCtrl = useRef(null)
 
-  // ── Re-evaluate papers whenever raw papers or settings change ──────────────
-  const allPapers = useMemo(() => recompute(rawPapers, filterSettings), [rawPapers, filterSettings])
+  useEffect(() => {
+    getConfig().then((c) => {
+      setEvalConfig(c.evaluation)
+      setFilterSettings(settingsFromConfig(c.evaluation))
+    }).catch(console.error)
+    loadProjects()
+  }, [])
 
-  // ── Apply cluster + category filters ──────────────────────────────────────
-  const displayPapers = useMemo(() => {
-    // Hide papers rejected by the semantic floor (minSemantic slider)
-    let papers = allPapers.filter((p) => p.evaluation?.category !== 'descartado_semantica')
+  const allPapers = useMemo(
+    () => recompute(rawPapers, filterSettings, evalConfig?.similarity_range),
+    [rawPapers, filterSettings, evalConfig],
+  )
 
+  // Every filter except the category pills (so the pills can show counts for this scope).
+  const scopedPapers = useMemo(() => {
+    let papers = allPapers
     if (activeCluster != null && clusters?.clusters) {
-      const clusterObj = clusters.clusters.find((c) => c.id === activeCluster)
-      if (clusterObj) {
-        const dois = new Set(clusterObj.papers.map((p) => (p.doi || '').toLowerCase()).filter(Boolean))
-        papers = papers.filter((p) => dois.has(((p.externalIds?.DOI) || '').toLowerCase()))
+      const c = clusters.clusters.find((x) => x.id === activeCluster)
+      if (c) {
+        const ids = new Set(c.paper_ids || [])
+        papers = papers.filter((p) => ids.has(p.id))
       }
     }
-
-    if (categoryFilter) {
-      papers = papers.filter((p) => p.evaluation?.category === categoryFilter)
+    if (hideFlagged) papers = papers.filter((p) => !(p.flags || []).length)
+    const q = textFilter.trim().toLowerCase()
+    if (q) {
+      papers = papers.filter((p) =>
+        `${p.title} ${p.abstract} ${(p.authors || []).map((a) => a.name).join(' ')} ${p.venue}`
+          .toLowerCase().includes(q))
     }
-
     return papers
-  }, [allPapers, activeCluster, clusters, categoryFilter])
+  }, [allPapers, activeCluster, clusters, hideFlagged, textFilter])
 
-  // ── Load projects ──────────────────────────────────────────────────────────
-  const loadProjects = () => getProjects().then(setProjects).catch(console.error)
-  useEffect(() => { loadProjects() }, [])
+  const displayPapers = useMemo(() => {
+    const papers = categoryFilter
+      ? scopedPapers.filter((p) => (p.evaluation?.category || 'unevaluated') === categoryFilter)
+      : scopedPapers
+    const key = SORTERS[sortBy]
+    return [...papers].sort((a, b) => key(b) - key(a))
+  }, [scopedPapers, categoryFilter, sortBy])
 
-  // ── Load papers + clusters when project changes ────────────────────────────
+  function loadProjects() { return getProjects().then(setProjects).catch(console.error) }
+
+  const loadProjectData = (p = project) => {
+    if (!p) return Promise.resolve()
+    return Promise.all([
+      getPapers(p).then(setRawPapers),
+      getClusters(p).then(setClusters),
+      getPrisma(p).then(setPrisma),
+      getMeta(p).then(setMeta),
+    ]).catch(console.error)
+  }
+
   useEffect(() => {
-    if (!project) { setRawPapers([]); setClusters(null); setActiveCluster(null); setCategoryFilter(null); return }
-    loadPapers()
-    loadClusters()
+    setActiveCluster(null); setCategoryFilter(null); setSelectedPaper(null); setSearchLogs([])
+    if (!project) { setRawPapers([]); setClusters(null); setPrisma(null); setMeta(null); return }
+    loadProjectData(project)
   }, [project])
 
-  const loadPapers   = () => getPapers(project).then(setRawPapers).catch(console.error)
-  const loadClusters = () => getClusters(project).then(setClusters).catch(console.error)
-
-  // ── Search ─────────────────────────────────────────────────────────────────
-  const handleSearch = async (query, context, maxResults) => {
+  const handleSearch = async (params) => {
     searchCtrl.current?.abort()
     const ctrl = new AbortController()
     searchCtrl.current = ctrl
     setIsSearching(true)
     setSearchLogs([])
     try {
-      for await (const event of streamSearch(project, { query, context, max_results: maxResults }, ctrl.signal)) {
+      for await (const event of streamSearch(project, params, ctrl.signal)) {
         setSearchLogs((prev) => [...prev, event])
-        if (event.type === 'done') { await loadPapers(); await loadClusters() }
+        if (event.type === 'result') await loadProjectData()
       }
     } catch (err) {
-      if (err.name !== 'AbortError')
-        setSearchLogs((prev) => [...prev, { type: 'error', message: err.message }])
+      if (err.name !== 'AbortError') setSearchLogs((prev) => [...prev, { type: 'error', message: err.message }])
     } finally {
       setIsSearching(false)
     }
   }
 
-  // ── Tab badge text ─────────────────────────────────────────────────────────
-  const tabBadge = (() => {
-    if (allPapers.length === 0) return null
-    const shown = displayPapers.length
-    const total = allPapers.length
-    return shown < total ? `${shown}/${total}` : `${total}`
-  })()
+  const tabBadge = allPapers.length === 0 ? null
+    : displayPapers.length < allPapers.length ? `${displayPapers.length}/${allPapers.length}`
+    : `${allPapers.length}`
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const openById = (id) => {
+    const p = allPapers.find((x) => x.id === id)
+    if (p) setSelectedPaper(p)
+  }
+
   return (
     <div className="app">
       <Masthead
         projects={projects}
         currentProject={project}
-        onProjectChange={(p) => {
-          setProject(p)
-          setActiveCluster(null)
-          setCategoryFilter(null)
-          setSelectedPaper(null)
-        }}
+        onProjectChange={setProject}
         onProjectsReload={loadProjects}
         onImport={() => setShowImport(true)}
       />
 
       <div className="main-layout">
-        {/* ── Left column ── */}
         <div className="main-column">
           <SearchPanel
             onSearch={handleSearch}
+            onApplyContext={(ctx) => setContext(project, ctx).then(() => loadProjectData()).catch((e) => alert(e.message))}
             isSearching={isSearching}
             disabled={!project}
+            projectContext={meta?.context || ''}
+            project={project}
           />
 
-          {searchLogs.length > 0 && (
-            <PipelineLog logs={searchLogs} isRunning={isSearching} />
-          )}
+          {searchLogs.length > 0 && <PipelineLog logs={searchLogs} isRunning={isSearching} />}
 
           <div className="tab-bar">
-            <button
-              className={`tab-btn ${activeTab === 'library' ? 'active' : ''}`}
-              onClick={() => setActiveTab('library')}
-            >
-              Papers
-              {tabBadge && <span className="tab-badge">{tabBadge}</span>}
+            <button className={`tab-btn ${activeTab === 'library' ? 'active' : ''}`}
+              onClick={() => setActiveTab('library')}>
+              Papers{tabBadge && <span className="tab-badge">{tabBadge}</span>}
             </button>
-            <button
-              className={`tab-btn ${activeTab === 'query' ? 'active' : ''}`}
-              onClick={() => setActiveTab('query')}
-            >
+            <button className={`tab-btn ${activeTab === 'query' ? 'active' : ''}`}
+              onClick={() => setActiveTab('query')}>
               Ask
             </button>
           </div>
@@ -182,46 +195,51 @@ export default function App() {
             {activeTab === 'library' && (
               <PaperLibrary
                 papers={displayPapers}
+                scopedPapers={scopedPapers}
+                libraryEmpty={allPapers.length === 0}
                 onSelectPaper={setSelectedPaper}
-                activeCluster={activeCluster}
+                activeClusterLabel={activeCluster != null
+                  ? clusters?.clusters?.find((c) => c.id === activeCluster)?.label : null}
                 onClearCluster={() => setActiveCluster(null)}
                 categoryFilter={categoryFilter}
                 onCategoryFilter={setCategoryFilter}
+                hideFlagged={hideFlagged}
+                onHideFlagged={setHideFlagged}
+                textFilter={textFilter}
+                onTextFilter={setTextFilter}
+                sortBy={sortBy}
+                onSortBy={setSortBy}
               />
             )}
-            {activeTab === 'query' && (
-              <SemanticQuery project={project} />
-            )}
+            {activeTab === 'query' && <SemanticQuery project={project} onOpen={openById} />}
           </div>
         </div>
 
-        {/* ── Right sidebar ── */}
         <aside className="sidebar">
           <Sidebar
             project={project}
             papers={allPapers}
+            visibleIds={displayPapers.map((p) => p.id)}
+            prisma={prisma}
             clusters={clusters}
             activeCluster={activeCluster}
             onClusterSelect={setActiveCluster}
-            onClustersGenerated={() => { loadClusters(); loadPapers() }}
+            onClustersGenerated={() => loadProjectData()}
             filterSettings={filterSettings}
+            defaults={evalConfig ? settingsFromConfig(evalConfig) : null}
             onFilterSettings={setFilterSettings}
           />
         </aside>
       </div>
 
-      {selectedPaper && (
-        <PaperDetail
-          paper={selectedPaper}
-          onClose={() => setSelectedPaper(null)}
-        />
-      )}
+      {selectedPaper && <PaperDetail paper={selectedPaper} onClose={() => setSelectedPaper(null)} />}
 
       {showImport && (
         <ImportModal
           project={project}
+          projectContext={meta?.context || ''}
           onClose={() => setShowImport(false)}
-          onDone={() => { loadPapers(); setShowImport(false) }}
+          onDone={() => loadProjectData()}
         />
       )}
     </div>

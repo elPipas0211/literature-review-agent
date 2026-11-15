@@ -1,93 +1,29 @@
 @echo off
-:: start.bat — bootstrap if needed, then start backend (:8000) and frontend (:5173)
-setlocal enabledelayedexpansion
+:: start.bat - start backend (:8000) and frontend (:5173) in two windows
+setlocal
 chcp 65001 >nul 2>&1
-title Literature Review Agent
-
+cd /d "%~dp0"
 set "ROOT=%~dp0"
-cd /d "%ROOT%"
 
-set BACKEND_PORT=8000
-set FRONTEND_PORT=5173
-
-if not exist ".logs" mkdir .logs
-
-:: ── Prerequisites ───────────────────────────────────────────────────────────────
-where conda >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] conda not found.
-    echo         Install Miniconda from: https://docs.conda.io/en/latest/miniconda.html
-    exit /b 1
+if not exist ".venv\Scripts\python.exe" (
+    echo First run: installing dependencies...
+    call install.bat || exit /b 1
+)
+if not exist "frontend\node_modules" (
+    pushd frontend & call npm install --no-audit --no-fund & popd
 )
 
-where node >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Node.js not found. Install v18+ from: https://nodejs.org
-    exit /b 1
-)
+call stop.bat >nul 2>&1
 
-where npm >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] npm not found. Install Node.js v18+ from: https://nodejs.org
-    exit /b 1
-)
-
-:: ── Bootstrap conda environment ─────────────────────────────────────────────────
-conda env list | findstr /B /C:"litreview " >nul 2>&1
-if errorlevel 1 (
-    echo Creating litreview conda environment (this may take several minutes^)...
-    call conda env create -f environment.yml
-    if errorlevel 1 (
-        echo [ERROR] Failed to create the conda environment.
-        exit /b 1
-    )
-    echo [OK] Conda environment 'litreview' ready.
-) else (
-    echo [OK] Conda environment 'litreview' already exists.
-)
-
-:: ── Bootstrap frontend dependencies ────────────────────────────────────────────
-if not exist "%ROOT%frontend\node_modules" (
-    echo Installing frontend dependencies...
-    cd "%ROOT%frontend"
-    call npm install
-    if errorlevel 1 (
-        echo [ERROR] npm install failed.
-        exit /b 1
-    )
-    cd /d "%ROOT%"
-    echo [OK] Frontend dependencies installed.
-)
-
-:: ── Kill any existing processes on these ports ─────────────────────────────────
-echo Checking for existing processes...
-for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr /R " 0\.0\.0\.0:%BACKEND_PORT% \|127\.0\.0\.1:%BACKEND_PORT% "') do (
-    taskkill /F /PID %%p >nul 2>&1
-)
-for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr /R " 0\.0\.0\.0:%FRONTEND_PORT% \|127\.0\.0\.1:%FRONTEND_PORT% "') do (
-    taskkill /F /PID %%p >nul 2>&1
-)
-
-:: ── Start backend in a new console window ─────────────────────────────────────
-echo Starting backend on port %BACKEND_PORT%...
-start "LRA-Backend" /D "%ROOT%" cmd /k "conda activate litreview && uvicorn backend.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
-
-:: ── Start frontend in a new console window ────────────────────────────────────
-echo Starting frontend on port %FRONTEND_PORT%...
+echo Starting backend on http://127.0.0.1:8000 ...
+start "LRA-Backend" /D "%ROOT%" cmd /k ".venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000"
+echo Starting frontend on http://localhost:5173 ...
 start "LRA-Frontend" /D "%ROOT%frontend" cmd /k "npm run dev"
 
-:: ── Wait for servers to initialise ────────────────────────────────────────────
 timeout /t 4 /nobreak >nul
-
+start "" http://localhost:5173
 echo.
-echo =============================================
-echo   Literature Review Agent is running
-echo =============================================
-echo   Frontend  ^>  http://localhost:%FRONTEND_PORT%
-echo   API docs  ^>  http://localhost:%BACKEND_PORT%/docs
-echo =============================================
-echo.
-echo Two windows opened: LRA-Backend and LRA-Frontend.
-echo Run stop.bat to stop both servers.
-echo.
+echo   App:      http://localhost:5173
+echo   API docs: http://127.0.0.1:8000/docs
+echo   Stop:     stop.bat  (or close the two windows)
 endlocal

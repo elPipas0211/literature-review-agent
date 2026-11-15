@@ -1,37 +1,57 @@
-from fastapi import APIRouter, HTTPException
+from datetime import datetime
+from typing import Literal
+
+from fastapi import APIRouter
+from fastapi.responses import Response
+from pydantic import BaseModel
+
+from backend.common import require_project
 from backend.config import get_config
-from src.storage.project_manager import ProjectManager
+from src.pipeline import prisma_summary
+from src.utils.bibtex_exporter import export_bibtex, library_bibtex
+from src.utils.exporters import to_csv, to_ris
 
 router = APIRouter(prefix="/api/projects", tags=["papers"])
 
 
 @router.get("/{project}/papers")
 def get_papers(project: str):
-    config = get_config()
-    pm = ProjectManager(config["storage"]["projects_dir"])
-    path = pm.papers_db_path(project)
-    if not path.exists():
-        raise HTTPException(404, f"Project '{project}' not found")
-    import json
-    papers = json.loads(path.read_text(encoding="utf-8"))
-    # Ensure every paper has a stable id field for the frontend
+    pm = require_project(project)
+    papers = pm.get_papers(project)
+    bib = library_bibtex(papers)
     for p in papers:
-        doi = ((p.get("externalIds") or {}).get("DOI") or "").strip().lower()
-        p["_id"] = doi or p.get("title", "")[:40]
+        p["cite_key"], p["bibtex"] = bib[p["id"]]
     return papers
 
 
-@router.get("/{project}/stats")
-def get_stats(project: str):
-    config = get_config()
-    pm = ProjectManager(config["storage"]["projects_dir"])
-    path = pm.papers_db_path(project)
-    if not path.exists():
-        raise HTTPException(404, f"Project '{project}' not found")
-    import json
-    papers = json.loads(path.read_text(encoding="utf-8"))
-    cats: dict[str, int] = {}
-    for p in papers:
-        cat = (p.get("evaluation") or {}).get("category", "unevaluated")
-        cats[cat] = cats.get(cat, 0) + 1
-    return {"total": len(papers), "by_category": cats}
+@router.get("/{project}/prisma")
+def get_prisma(project: str):
+    require_project(project)
+    return prisma_summary(project, get_config())
+
+
+class ExportRequest(BaseModel):
+    format: Literal["csv", "ris", "bib"]
+    ids: list[str] | None = None  # None = whole library
+
+
+_MEDIA = {"csv": "text/csv; charset=utf-8", "ris": "application/x-research-info-systems",
+          "bib": "application/x-bibtex"}
+
+
+@router.post("/{project}/export")
+def export(project: str, req: ExportRequest):
+    pm = require_project(project)
+    library = pm.get_papers(project)
+    wanted = set(req.ids) if req.ids is not None else None
+    if req.format == "bib":
+        body = export_bibtex(library, only_ids=wanted)  # keys computed over the whole library
+    else:
+        order = {pid: i for i, pid in enumerate(req.ids or [])}
+        papers = [p for p in library if wanted is None or p["id"] in wanted]
+        if req.ids:
+            papers.sort(key=lambda p: order.get(p["id"], 0))
+        body = to_csv(papers) if req.format == "csv" else to_ris(papers)
+    filename = f"{project}_{datetime.now():%Y%m%d}.{req.format}"
+    return Response(body, media_type=_MEDIA[req.format],
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})

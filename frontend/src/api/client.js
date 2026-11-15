@@ -1,98 +1,62 @@
 const BASE = '/api'
 const enc = encodeURIComponent
 
+async function errorMessage(res) {
+  const text = await res.text()
+  try {
+    const d = JSON.parse(text)
+    if (typeof d.detail === 'string') return d.detail
+    if (Array.isArray(d.detail)) return d.detail.map((x) => x.msg).join('; ')
+    return JSON.stringify(d)
+  } catch {
+    return text || `HTTP ${res.status}`
+  }
+}
+
 async function req(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, opts)
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try { const d = await res.json(); msg = d.detail ?? JSON.stringify(d) } catch { msg = await res.text() || msg }
-    throw new Error(msg)
-  }
+  if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
 
-export const getProjects = () => req('/projects')
+const json = (method, body) => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+})
 
-export const createProject = (name) =>
-  req('/projects', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  })
+export const getConfig     = () => req('/config')
+export const getProjects   = () => req('/projects')
+export const createProject = (name) => req('/projects', json('POST', { name }))
+export const renameProject = (name, newName) => req(`/projects/${enc(name)}`, json('PATCH', { new_name: newName }))
+export const deleteProject = (name) => req(`/projects/${enc(name)}`, { method: 'DELETE' })
+export const getMeta       = (project) => req(`/projects/${enc(project)}/meta`)
+export const setContext    = (project, context) => req(`/projects/${enc(project)}/context`, json('PUT', { context }))
+export const getPapers     = (project) => req(`/projects/${enc(project)}/papers`)
+export const getPrisma     = (project) => req(`/projects/${enc(project)}/prisma`)
+export const getClusters   = (project) => req(`/projects/${enc(project)}/clusters`)
+export const queryPapers   = (project, question, top = 10) =>
+  req(`/projects/${enc(project)}/query`, json('POST', { question, top }))
 
-export const renameProject = (name, newName) =>
-  req(`/projects/${enc(name)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ new_name: newName }),
-  })
-
-export const deleteProject = (name) =>
-  req(`/projects/${enc(name)}`, { method: 'DELETE' })
-
-export const getPapers   = (project) => req(`/projects/${enc(project)}/papers`)
-export const getStats    = (project) => req(`/projects/${enc(project)}/stats`)
-export const getClusters = (project) => req(`/projects/${enc(project)}/clusters`)
-
-export const queryPapers = (project, question, top = 5) =>
-  req(`/projects/${enc(project)}/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, top }),
-  })
-
-/** POST SSE stream — yields parsed event objects */
-export async function* streamSearch(project, params, signal) {
-  const res = await fetch(`${BASE}/projects/${enc(project)}/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-    signal,
-  })
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try { const d = await res.json(); msg = d.detail ?? JSON.stringify(d) } catch { msg = await res.text() || msg }
-    throw new Error(msg)
-  }
-  yield* _readSSE(res.body, signal)
+/** Download an export (csv | ris | bib). `ids` = null exports the whole library. */
+export async function downloadExport(project, format, ids = null) {
+  const res = await fetch(`${BASE}/projects/${enc(project)}/export`, json('POST', { format, ids }))
+  if (!res.ok) throw new Error(await errorMessage(res))
+  const blob = await res.blob()
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1]
+    || `${project}.${format}`
+  const url = URL.createObjectURL(blob)
+  const a = Object.assign(document.createElement('a'), { href: url, download: name })
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
-/** POST SSE stream for CSV import (multipart form) */
-export async function* streamImport(project, file, context, signal) {
-  const form = new FormData()
-  form.append('file', file)
-  if (context) form.append('context', context)
-  const res = await fetch(`${BASE}/projects/${enc(project)}/import`, {
-    method: 'POST',
-    body: form,
-    signal,
-  })
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try { const d = await res.json(); msg = d.detail ?? JSON.stringify(d) } catch { msg = await res.text() || msg }
-    throw new Error(msg)
-  }
-  yield* _readSSE(res.body, signal)
-}
-
-/** POST SSE stream for cluster generation */
-export async function* streamClusters(project, params, signal) {
-  const res = await fetch(`${BASE}/projects/${enc(project)}/clusters`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-    signal,
-  })
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try { const d = await res.json(); msg = d.detail ?? JSON.stringify(d) } catch { msg = await res.text() || msg }
-    throw new Error(msg)
-  }
-  yield* _readSSE(res.body, signal)
-}
-
-async function* _readSSE(body, signal) {
-  const reader = body.getReader()
+async function* sse(path, opts) {
+  const res = await fetch(`${BASE}${path}`, opts)
+  if (!res.ok) throw new Error(await errorMessage(res))
+  const reader = res.body.getReader()
   const dec = new TextDecoder()
   let buf = ''
   try {
@@ -115,20 +79,15 @@ async function* _readSSE(body, signal) {
   }
 }
 
-/** Generates a BibTeX entry client-side from a paper object */
-export function paperToBibtex(paper) {
-  const doi = (paper.externalIds?.DOI || '').trim()
-  const year = paper.year || ''
-  const rawKey = doi
-    ? doi.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20)
-    : ((paper.title || 'unknown').replace(/\s+/g, '').slice(0, 12) + year)
-  const authors = (paper.authors || []).map((a) => a.name).join(' and ')
-  const venue = paper.venue || ''
-  return `@article{${rawKey},
-  title     = {${paper.title || ''}},
-  author    = {${authors}},
-  year      = {${year}},
-  journal   = {${venue}},
-  doi       = {${doi}},
-}`
+export const streamSearch = (project, params, signal) =>
+  sse(`/projects/${enc(project)}/search`, { ...json('POST', params), signal })
+
+export function streamImport(project, file, context, signal) {
+  const form = new FormData()
+  form.append('file', file)
+  if (context) form.append('context', context)
+  return sse(`/projects/${enc(project)}/import`, { method: 'POST', body: form, signal })
 }
+
+export const streamClusters = (project, params, signal) =>
+  sse(`/projects/${enc(project)}/clusters`, { ...json('POST', params), signal })

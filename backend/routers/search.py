@@ -1,56 +1,26 @@
-import asyncio
-import json
-import threading
-
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from backend.common import check_name, get_pm, sse_job
 from backend.config import get_config
-from backend.pipeline import run_search
+from src.pipeline import run_search
 
 router = APIRouter(prefix="/api/projects", tags=["search"])
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(min_length=1)
     context: str | None = None
-    max_results: int = 50
+    max_results: int = Field(100, ge=1, le=1000)  # per source
+    year_from: int | None = None
+    year_to: int | None = None
 
 
 @router.post("/{project}/search")
 async def search(project: str, req: SearchRequest):
-    config = get_config()
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-    done = threading.Event()
-
-    def pipeline_thread():
-        def emit(event: dict):
-            loop.call_soon_threadsafe(queue.put_nowait, event)
-        try:
-            run_search(project, req.query, req.context, req.max_results, config, emit)
-        except Exception as exc:
-            loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(exc)})
-        finally:
-            done.set()
-            loop.call_soon_threadsafe(queue.put_nowait, {"type": "_eof"})
-
-    threading.Thread(target=pipeline_thread, daemon=True).start()
-
-    async def generate():
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                yield ": keepalive\n\n"
-                continue
-            if event.get("type") == "_eof":
-                break
-            yield f"data: {json.dumps(event)}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    check_name(project)
+    get_pm().init_project(project)
+    return sse_job(lambda emit: run_search(
+        project, req.query, req.context, req.max_results, get_config(), emit,
+        year_from=req.year_from, year_to=req.year_to,
+    ))

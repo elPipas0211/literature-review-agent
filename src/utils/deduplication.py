@@ -1,140 +1,128 @@
 """
-Deduplication utilities: by DOI and by title similarity.
+Deduplication by DOI and by fuzzy title.
 
-When the same DOI appears in both Semantic Scholar and OpenAlex, the first
-occurrence (SS, which appears first in the clients list) is kept and the
-'_sources' list is extended to track all origins.
-
-Papers without a DOI are never deduplicated by DOI — they're always kept as-is.
+Nothing is thrown away silently: duplicates are *merged* (sources, provenance,
+missing fields) into the record that is kept, and the caller gets counts for
+the PRISMA flow.
 """
 from difflib import SequenceMatcher
 
+from src.utils.records import get_doi, norm_title
 
-def _norm_title(title: str) -> str:
-    """Lowercase and collapse whitespace so title comparisons are case- and spacing-insensitive."""
-    return " ".join(title.lower().split())
-
-
-def deduplicate_by_doi(papers: list[dict]) -> tuple[list[dict], int]:
-    """
-    Return (unique_papers, n_duplicates_removed).
-    unique_papers preserves original insertion order for DOI-less papers.
-    """
-    seen: dict[str, dict] = {}
-    no_doi: list[dict] = []
-    duplicates = 0
-
-    for paper in papers:
-        doi = ((paper.get("externalIds") or {}).get("DOI") or "").strip().lower()
-        if not doi:
-            no_doi.append(paper)
-            continue
-
-        if doi in seen:
-            duplicates += 1
-            existing = seen[doi]
-            sources = existing.get("_sources", [existing.get("_source", "unknown")])
-            new_src = paper.get("_source", "unknown")
-            if new_src not in sources:
-                sources.append(new_src)
-            existing["_sources"] = sources
-        else:
-            p = dict(paper)
-            p["_sources"] = [p.get("_source", "unknown")]
-            seen[doi] = p
-
-    return list(seen.values()) + no_doi, duplicates
+TITLE_THRESHOLD = 0.92
 
 
-def deduplicate_by_title(
-    papers: list[dict],
-    threshold: float = 0.90,
-) -> tuple[list[dict], int]:
-    """
-    Remove near-duplicate titles within a batch.
+def _richness(p: dict) -> tuple:
+    """Prefer the record with abstract, DOI and more citations."""
+    return (bool(p.get("abstract")), bool(get_doi(p)), p.get("citationCount") or 0)
 
-    When two papers share a title with SequenceMatcher ratio >= threshold,
-    keep the one with more citations. Papers with empty titles are never
-    deduplicated. Returns (unique_papers, n_removed).
-    """
+
+def merge_records(a: dict, b: dict) -> dict:
+    """Merge two records describing the same paper; keeps the richer one as base."""
+    base, other = (a, b) if _richness(a) >= _richness(b) else (b, a)
+    merged = dict(base)
+    for field in ("abstract", "venue", "year", "openAccessPdf"):
+        if not merged.get(field) and other.get(field):
+            merged[field] = other[field]
+    if not merged.get("authors") and other.get("authors"):
+        merged["authors"] = other["authors"]
+    if merged.get("publicationType") in (None, "other") and other.get("publicationType") not in (None, "other"):
+        merged["publicationType"] = other["publicationType"]
+    if not get_doi(merged) and get_doi(other):
+        merged["externalIds"] = {"DOI": get_doi(other)}
+    cites = [c for c in (a.get("citationCount"), b.get("citationCount")) if c is not None]
+    merged["citationCount"] = max(cites) if cites else None
+    merged["_sources"] = list(dict.fromkeys((a.get("_sources") or []) + (b.get("_sources") or [])))
+    merged["found_in"] = (a.get("found_in") or []) + [
+        f for f in (b.get("found_in") or []) if f not in (a.get("found_in") or [])
+    ]
+    return merged
+
+
+def _similar(t1: str, w1: set, t2: str, w2: set, threshold: float) -> bool:
+    if not t1 or not t2:
+        return False
+    if t1 == t2:
+        return True
+    union = w1 | w2
+    if not union or len(w1 & w2) / len(union) < threshold * 0.55:
+        return False
+    return SequenceMatcher(None, t1, t2).ratio() >= threshold
+
+
+class _TitleIndex:
+    """Exact normalized-title lookup plus a fuzzy fallback with a Jaccard pre-filter."""
+
+    def __init__(self):
+        self.exact: dict[str, int] = {}
+        self.items: list[tuple[str, set, int]] = []
+
+    def add(self, title: str, idx: int):
+        t = norm_title(title)
+        if not t:
+            return
+        self.exact.setdefault(t, idx)
+        self.items.append((t, set(t.split()), idx))
+
+    def find(self, title: str, threshold: float) -> int | None:
+        t = norm_title(title)
+        if not t:
+            return None
+        if t in self.exact:
+            return self.exact[t]
+        words = set(t.split())
+        for t2, w2, idx in self.items:
+            if _similar(t, words, t2, w2, threshold):
+                return idx
+        return None
+
+
+def dedupe_batch(papers: list[dict], threshold: float = TITLE_THRESHOLD) -> tuple[list[dict], int]:
+    """Merge duplicates inside one batch (same DOI or near-identical title)."""
     kept: list[dict] = []
+    by_doi: dict[str, int] = {}
+    titles = _TitleIndex()
     removed = 0
-
-    for paper in papers:
-        raw = (paper.get("title") or "").strip()
-        if not raw:
-            kept.append(paper)
-            continue
-        norm = _norm_title(raw)
-        words = set(norm.split())
-
-        match_idx: int | None = None
-        for i, existing in enumerate(kept):
-            e_norm = _norm_title((existing.get("title") or "").strip())
-            if not e_norm:
-                continue
-            # Quick word-overlap pre-filter before the expensive SequenceMatcher call
-            e_words = set(e_norm.split())
-            union = words | e_words
-            if union and len(words & e_words) / len(union) < threshold * 0.55:
-                continue
-            if SequenceMatcher(None, norm, e_norm).ratio() >= threshold:
-                match_idx = i
-                break
-
-        if match_idx is None:
-            kept.append(paper)
+    for p in papers:
+        doi = get_doi(p)
+        idx = by_doi.get(doi) if doi else None
+        if idx is None:
+            idx = titles.find(p.get("title"), threshold)
+            # Two different DOIs with the same title are usually preprint vs. published: merge.
+        if idx is None:
+            kept.append(p)
+            i = len(kept) - 1
+            if doi:
+                by_doi[doi] = i
+            titles.add(p.get("title"), i)
         else:
-            new_cites = paper.get("citationCount") or 0
-            existing_cites = kept[match_idx].get("citationCount") or 0
-            if new_cites > existing_cites:
-                kept[match_idx] = paper
+            kept[idx] = merge_records(kept[idx], p)
             removed += 1
-
+            if doi:
+                by_doi.setdefault(doi, idx)
     return kept, removed
 
 
-def filter_known_by_title(
-    papers: list[dict],
-    master_titles: list[str],
-    threshold: float = 0.90,
-) -> tuple[list[dict], int]:
-    """
-    Remove papers whose title is too similar to any title already in master_db.
+def match_library(
+    papers: list[dict], library: list[dict], threshold: float = TITLE_THRESHOLD
+) -> tuple[list[dict], list[tuple[dict, int]]]:
+    """Split papers into (new, [(paper, index_in_library), ...])."""
+    by_doi = {get_doi(p): i for i, p in enumerate(library) if get_doi(p)}
+    by_id = {p.get("id"): i for i, p in enumerate(library)}
+    titles = _TitleIndex()
+    for i, p in enumerate(library):
+        titles.add(p.get("title"), i)
 
-    Papers with empty titles are never filtered. Uses a Jaccard word-overlap
-    pre-filter to avoid expensive SequenceMatcher calls on dissimilar pairs.
-    Returns (new_papers, n_skipped).
-    """
-    master_norms = [_norm_title(t) for t in master_titles if t.strip()]
-    master_words = [set(n.split()) for n in master_norms]
-    jaccard_floor = threshold * 0.55
-
-    new: list[dict] = []
-    skipped = 0
-
-    for paper in papers:
-        raw = (paper.get("title") or "").strip()
-        if not raw:
-            new.append(paper)
-            continue
-        norm = _norm_title(raw)
-        words = set(norm.split())
-
-        is_dup = False
-        for mt, mt_words in zip(master_norms, master_words):
-            union = words | mt_words
-            if not union:
-                continue
-            if len(words & mt_words) / len(union) < jaccard_floor:
-                continue
-            if SequenceMatcher(None, norm, mt).ratio() >= threshold:
-                is_dup = True
-                break
-
-        if is_dup:
-            skipped += 1
+    new, matched = [], []
+    for p in papers:
+        doi = get_doi(p)
+        idx = by_doi.get(doi) if doi else None
+        if idx is None:
+            idx = by_id.get(p.get("id"))
+        if idx is None:
+            idx = titles.find(p.get("title"), threshold)
+        if idx is None:
+            new.append(p)
         else:
-            new.append(paper)
-
-    return new, skipped
+            matched.append((p, idx))
+    return new, matched

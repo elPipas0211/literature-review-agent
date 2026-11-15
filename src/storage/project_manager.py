@@ -1,191 +1,144 @@
-import hashlib
+"""
+On-disk layout of a project:
+
+projects/<project>/
+├── project.json           research context (protocol) + metadata
+├── master_db/
+│   ├── papers.json        every unique record ever retrieved (source of truth)
+│   ├── embeddings.npz     embedding cache keyed by paper id
+│   ├── master.bib         BibTeX export, regenerated after every run
+│   └── clusters.json      last clustering report
+└── sessions/<session_id>/
+    ├── session.json       PRISMA record of the run (query, date, counts per source, config)
+    └── results/<source>.json   raw records as returned by each source
+"""
 import json
+import re
+import threading
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
+_locks_guard = threading.Lock()
+
+_UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+class InvalidProjectName(ValueError):
+    pass
+
+
+def validate_name(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        raise InvalidProjectName("Project name cannot be empty")
+    if len(name) > 50:
+        raise InvalidProjectName("Project name must be 50 characters or fewer")
+    if _UNSAFE.search(name) or name.strip(".") == "":
+        raise InvalidProjectName('Project name cannot contain \\ / : * ? " < > | or be only dots')
+    return name
+
+
+def _write_json(path: Path, data) -> None:
+    """Atomic write: never leaves a half-written papers.json behind."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
 
 class ProjectManager:
-    """
-    Manages the on-disk layout:
-
-    projects/
-    └── {project}/
-        ├── master_db/
-        │   ├── papers.json    ← master DB (all accepted papers across sessions)
-        │   ├── master.bib     ← BibTeX export (regenerated each pipeline run)
-        │   └── embeddings/    ← ChromaDB vector store (persistent)
-        └── sessions/
-            └── {session_id}/
-                ├── session_log.json
-                └── results/
-                    └── {query_hash}.json
-    """
-
-    def __init__(self, projects_dir: str = "projects"):
+    def __init__(self, projects_dir: str | Path):
         self.root = Path(projects_dir)
 
-    # ------------------------------------------------------------------
-    # Project helpers
-    # ------------------------------------------------------------------
-
+    # ── paths ────────────────────────────────────────────────────────────────
     def project_path(self, project: str) -> Path:
-        """Absolute path to the project root directory."""
-        return self.root / project
+        return self.root / validate_name(project)
 
     def master_db_path(self, project: str) -> Path:
-        """Path to master_db/ — contains papers.json, master.bib, and the ChromaDB folder."""
         return self.project_path(project) / "master_db"
 
-    def chroma_dir(self, project: str) -> Path:
-        """Path to the ChromaDB persistent vector store for this project."""
-        return self.master_db_path(project) / "embeddings"
-
-    def bibtex_path(self, project: str) -> Path:
-        """Path to the generated BibTeX file (regenerated on every search/import)."""
-        return self.master_db_path(project) / "master.bib"
-
     def papers_db_path(self, project: str) -> Path:
-        """Path to papers.json — the canonical source of truth for all accepted papers."""
         return self.master_db_path(project) / "papers.json"
 
+    def embeddings_path(self, project: str) -> Path:
+        return self.master_db_path(project) / "embeddings.npz"
+
+    def bibtex_path(self, project: str) -> Path:
+        return self.master_db_path(project) / "master.bib"
+
+    def clusters_path(self, project: str) -> Path:
+        return self.master_db_path(project) / "clusters.json"
+
+    def meta_path(self, project: str) -> Path:
+        return self.project_path(project) / "project.json"
+
+    def sessions_dir(self, project: str) -> Path:
+        return self.project_path(project) / "sessions"
+
+    # ── projects ─────────────────────────────────────────────────────────────
+    def exists(self, project: str) -> bool:
+        return self.papers_db_path(project).exists()
+
+    def list_projects(self) -> list[str]:
+        if not self.root.exists():
+            return []
+        return sorted(p.name for p in self.root.iterdir() if (p / "master_db" / "papers.json").exists())
+
     def init_project(self, project: str) -> Path:
-        """Create the project directory tree if it doesn't exist and initialize an empty papers.json."""
         path = self.project_path(project)
-        (path / "sessions").mkdir(parents=True, exist_ok=True)
-        (path / "master_db" / "embeddings").mkdir(parents=True, exist_ok=True)
-        db = self.papers_db_path(project)
-        if not db.exists():
-            db.write_text("[]", encoding="utf-8")
+        self.sessions_dir(project).mkdir(parents=True, exist_ok=True)
+        self.master_db_path(project).mkdir(parents=True, exist_ok=True)
+        if not self.papers_db_path(project).exists():
+            _write_json(self.papers_db_path(project), [])
+        if not self.meta_path(project).exists():
+            _write_json(self.meta_path(project), {"context": "", "created_at": datetime.now().isoformat()})
         return path
 
-    # ------------------------------------------------------------------
-    # Master papers DB helpers
-    # ------------------------------------------------------------------
+    def lock(self, project: str) -> threading.RLock:
+        """One lock per project: runs that modify papers.json are serialized."""
+        with _locks_guard:
+            return _locks[str(self.project_path(project).resolve())]
 
-    def get_all_master_papers(self, project: str) -> list[dict]:
-        """Return all papers in the master DB, or [] if not initialized."""
-        db = self.papers_db_path(project)
-        if not db.exists():
+    def get_meta(self, project: str) -> dict:
+        p = self.meta_path(project)
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"context": ""}
+
+    def set_meta(self, project: str, **fields) -> dict:
+        meta = {**self.get_meta(project), **fields}
+        _write_json(self.meta_path(project), meta)
+        return meta
+
+    # ── papers ───────────────────────────────────────────────────────────────
+    def get_papers(self, project: str) -> list[dict]:
+        p = self.papers_db_path(project)
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+
+    def save_papers(self, project: str, papers: list[dict]) -> None:
+        _write_json(self.papers_db_path(project), papers)
+
+    # ── sessions (PRISMA trail) ──────────────────────────────────────────────
+    def new_session(self, project: str, kind: str) -> tuple[str, Path]:
+        session_id = f"{datetime.now():%Y%m%d_%H%M%S}_{kind}_{uuid.uuid4().hex[:4]}"
+        path = self.sessions_dir(project) / session_id
+        (path / "results").mkdir(parents=True, exist_ok=True)
+        return session_id, path
+
+    def save_raw_results(self, session_path: Path, source: str, records: list[dict]) -> None:
+        _write_json(session_path / "results" / f"{source}.json", records)
+
+    def save_session(self, session_path: Path, data: dict) -> None:
+        _write_json(session_path / "session.json", data)
+
+    def list_sessions(self, project: str) -> list[dict]:
+        d = self.sessions_dir(project)
+        if not d.exists():
             return []
-        return json.loads(db.read_text(encoding="utf-8"))
-
-    def upsert_master_papers(self, project: str, papers: list[dict]) -> dict:
-        """
-        Merge new papers into the master papers.json by DOI.
-        Papers without DOI are merged by title+year hash.
-        Returns {"added": N, "skipped": M}.
-        """
-        existing = self.get_all_master_papers(project)
-
-        def _doi(p: dict) -> str:
-            return ((p.get("externalIds") or {}).get("DOI") or "").strip().lower()
-
-        def _fallback_key(p: dict) -> str:
-            raw = f"{(p.get('title') or '').lower()}_{p.get('year', '')}"
-            return "noDOI_" + hashlib.md5(raw.encode()).hexdigest()[:12]
-
-        def _key(p: dict) -> str:
-            d = _doi(p)
-            return d if d else _fallback_key(p)
-
-        seen = {_key(p): p for p in existing}
-        added = 0
-        skipped = 0
-
-        for paper in papers:
-            k = _key(paper)
-            if k in seen:
-                skipped += 1
-            else:
-                seen[k] = paper
-                added += 1
-
-        db = self.papers_db_path(project)
-        db.write_text(
-            json.dumps(list(seen.values()), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        return {"added": added, "skipped": skipped}
-
-    # ------------------------------------------------------------------
-    # Session helpers
-    # ------------------------------------------------------------------
-
-    def new_session(self, project: str) -> tuple[str, Path]:
-        """Create a timestamped session directory and write an initial session_log.json."""
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_id = f"{ts}_{uuid.uuid4().hex[:6]}"
-        session_path = self.project_path(project) / "sessions" / session_id
-        (session_path / "results").mkdir(parents=True, exist_ok=True)
-        log = {
-            "session_id": session_id,
-            "project": project,
-            "created_at": datetime.now().isoformat(),
-            "queries": [],
-        }
-        (session_path / "session_log.json").write_text(
-            json.dumps(log, indent=2), encoding="utf-8"
-        )
-        return session_id, session_path
-
-    # ------------------------------------------------------------------
-    # Result persistence
-    # ------------------------------------------------------------------
-
-    def save_query_results(
-        self,
-        session_path: Path,
-        query: str,
-        source: str,
-        passed: list[dict],
-        rejected: list[dict],
-    ) -> Path:
-        """Save per-source raw results to disk and append a summary entry to session_log.json."""
-        query_hash = hashlib.md5(f"{source}:{query}".encode()).hexdigest()[:8]
-        payload = {
-            "query": query,
-            "source": source,
-            "timestamp": datetime.now().isoformat(),
-            "total_retrieved": len(passed) + len(rejected),
-            "passed_filter": len(passed),
-            "filtered_out": len(rejected),
-            "papers": passed,
-            "rejected": rejected,
-        }
-        out = session_path / "results" / f"{source}_{query_hash}.json"
-        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        # Update session log
-        log_path = session_path / "session_log.json"
-        log = json.loads(log_path.read_text(encoding="utf-8"))
-        log["queries"].append(
-            {
-                "source": source,
-                "query": query,
-                "timestamp": payload["timestamp"],
-                "passed": len(passed),
-                "rejected": len(rejected),
-                "result_file": out.name,
-            }
-        )
-        log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
-
-        return out
-
-    def save_consolidated(
-        self,
-        session_path: Path,
-        papers: list[dict],
-        stats: dict,
-    ) -> Path:
-        """Save the final consolidated output for the session."""
-        out = session_path / "consolidated.json"
-        payload = {
-            "timestamp": datetime.now().isoformat(),
-            "pipeline_stats": stats,
-            "total_final": len(papers),
-            "papers": papers,
-        }
-        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        out = []
+        for s in sorted(d.iterdir(), reverse=True):
+            f = s / "session.json"
+            if f.exists():
+                out.append(json.loads(f.read_text(encoding="utf-8")))
         return out

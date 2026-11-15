@@ -1,45 +1,46 @@
 sources:
   semantic_scholar:
-    api_key: ""          # optional — increases rate limits
-    base_url: "https://api.semanticscholar.org/graph/v1"
+    enabled: true
+    # Free key: https://www.semanticscholar.org/product/api
+    # Without it the public pool answers HTTP 429 most of the time.
+    api_key: ""
     rate_limit_delay: 1.0
-    max_results_per_query: 100
   openalex:
-    email: ""            # polite-pool identifier
-    base_url: "https://api.openalex.org"
-    max_results_per_query: 100
+    enabled: true
+    email: ""            # optional: puts requests in OpenAlex's "polite pool"
 
-filters:
-  require_abstract: true
-  require_doi: true
-  require_citation_count: true
-
+# Quality flags are LABELS ONLY: nothing is deleted. Turn the citation floor on
+# if you want old, rarely cited papers marked as "below_citation_floor".
 citation_floors:
+  enabled: false
   pre_2015:
-    year_cutoff: 2015      # papers with year < 2015
+    year_cutoff: 2015      # year < 2015
     min_citations: 500
   mid_range:
-    year_from: 2015        # papers with 2015 <= year <= 2020
+    year_from: 2015        # 2015 <= year <= 2020
     year_to: 2020
     min_citations: 100
-  # papers after 2020: no floor
 
+# Relevance score = ranking aid (see src/evaluation/scoring.py)
 evaluation:
+  # Raw cosine similarities from multilingual-e5 fall in a narrow band; this
+  # range is mapped linearly to semantic_score 0..1. Recalibrate if you change
+  # the model (measured: off-topic ~0.75, on-topic ~0.85-0.90).
+  similarity_range: [0.75, 0.90]
   weights:
-    semantic: 0.80      # cosine similarity between context and abstract
-    impact: 0.20        # log-normalized citation count
-  citation_ref: 300    # citations at which impact score reaches 1.0 (log scale saturates here)
+    semantic: 0.80
+    impact: 0.20
+  citation_ref: 300        # citations at which impact_score saturates at 1.0
   thresholds:
-    min_semantic: 0.40  # semantic_score < this → descartado antes del score combinado
-    relevant: 0.50      # final_score >= this → relevante
-    potentially: 0.30   # final_score >= this → potencialmente_relevante
-    # below potentially → no_relevante
+    relevant: 0.55         # score >= this -> "relevante"
+    potentially: 0.35      # score >= this -> "potencialmente_relevante", else "no_relevante"
+
+embeddings:
+  # Multilingual: write the context / questions in Spanish or English,
+  # papers in English are matched across languages.
+  model: "intfloat/multilingual-e5-small"
+  query_prefix: "query: "
+  passage_prefix: "passage: "
 
 storage:
   projects_dir: "projects"
-
-embeddings:
-  model: "all-MiniLM-L6-v2"
-
-claude:
-  model: "claude-sonnet-4-6"   # used by claude_evaluator.py (not by generate_queries.py)

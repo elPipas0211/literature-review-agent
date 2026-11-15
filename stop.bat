@@ -1,5 +1,5 @@
 @echo off
-:: stop.bat — kill uvicorn (:8000) and Vite (:5173)
+:: stop.bat - kill uvicorn (:8000) and Vite (:5173)
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 
@@ -8,7 +8,7 @@ set FRONTEND_PORT=5173
 
 echo Stopping Literature Review Agent...
 
-:: ── Kill by port ───────────────────────────────────────────────────────────────
+:: -- Kill by port ---------------------------------------------------------------
 set FOUND_BACKEND=0
 for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr /R " 0\.0\.0\.0:%BACKEND_PORT% \|127\.0\.0\.1:%BACKEND_PORT% "') do (
     echo   Stopping PID %%p on port %BACKEND_PORT%
