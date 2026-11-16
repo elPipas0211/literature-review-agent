@@ -128,3 +128,27 @@ def test_exports_contain_all_fields():
     ris = to_ris([p])
     assert "TY  - JOUR" not in ris or "TI  - T" in ris
     assert "DO  - 10.1/z" in ris and ris.strip().endswith("ER  -")
+
+
+def test_review_detection_and_merge_keeps_reading_list():
+    from src.utils.records import detect_review
+    assert detect_review("A Survey of Deep Anomaly Detection")
+    assert detect_review("Some title", "review")
+    assert not detect_review("LSTM autoencoders for sensors")
+    old = rec(title="Same paper", externalIds={"DOI": "10.1/s"})
+    old.update(starred=True, note="read first")
+    new = rec(title="Same paper", externalIds={"DOI": "10.1/s"}, abstract="longer abstract", citationCount=50)
+    merged = {**old, **__import__("src.utils.deduplication", fromlist=["x"]).merge_records(old, new)}
+    assert merged["starred"] and merged["note"] == "read first"
+
+
+def test_keyword_filter_and_cluster_labels():
+    from src.keywords import _pick, label_from_keywords
+    picked = _pick([("datasets demonstrate", 0.9), ("anomaly detection", 0.8), ("detecting anomalies", 0.7),
+                    ("lstm autoencoder", 0.6), ("2020", 0.5)], 5)
+    assert picked == ["anomaly detection", "lstm autoencoder"]
+    shared = ["anomaly detection"]
+    a = [{"keywords": shared + ["autoencoder"]}, {"keywords": shared + ["autoencoder"]}]
+    b = [{"keywords": shared + ["transformer"]}, {"keywords": shared + ["transformer"]}]
+    labels = label_from_keywords([a, b], n=2)
+    assert labels[0][0] == "autoencoder" and labels[1][0] == "transformer"

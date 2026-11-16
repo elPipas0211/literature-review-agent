@@ -1,13 +1,8 @@
 sources:
-  semantic_scholar:
-    enabled: true
-    # Free key: https://www.semanticscholar.org/product/api
-    # Without it the public pool answers HTTP 429 most of the time.
-    api_key: ""
-    rate_limit_delay: 1.0
   openalex:
-    enabled: true
-    email: ""            # optional: puts requests in OpenAlex's "polite pool"
+    # Optional but recommended: your email puts requests in OpenAlex's faster
+    # "polite pool". No registration needed.
+    email: ""
 
 # Quality flags are LABELS ONLY: nothing is deleted. Turn the citation floor on
 # if you want old, rarely cited papers marked as "below_citation_floor".
@@ -34,6 +29,9 @@ evaluation:
   thresholds:
     relevant: 0.55         # score >= this -> "relevante"
     potentially: 0.35      # score >= this -> "potencialmente_relevante", else "no_relevante"
+
+keywords:
+  per_paper: 5           # KeyBERT keyphrases stored per paper (computed once)
 
 embeddings:
   # Multilingual: write the context / questions in Spanish or English,

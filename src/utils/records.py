@@ -9,7 +9,11 @@ A *record* is a plain dict with (at least) these keys:
     authors          [{"name": "..."}]
     publicationType  article | conference | chapter | book | preprint | thesis | other
     openAccessPdf    URL string or None
-    _sources         list of sources that returned it (semantic_scholar, openalex, scopus_csv, ...)
+    openalexId       "W123..." when known (needed for snowballing)
+    is_review        survey / review article (document type or title wording)
+    keywords         KeyBERT keyphrases (computed once per paper)
+    starred, note    your reading list — never overwritten by later searches
+    _sources         list of sources that returned it (openalex, scopus_csv, snowball, ...)
     found_in         list of {"session", "kind", "query", "source"} — provenance for PRISMA-S
     flags            list of quality flags (missing_abstract, missing_doi, ...) — never used to drop
     evaluation       {"similarity", "semantic_score", "impact_score", "score", "category"} or absent
@@ -80,6 +84,18 @@ def classify_publication_type(*hints: str | None) -> str:
     return "other"
 
 
+_REVIEW_TITLE = re.compile(
+    r"\b(survey|review|overview|state[- ]of[- ]the[- ]art|meta[- ]analysis|systematic mapping|"
+    r"scoping study|literature analysis|tutorial)\b", re.IGNORECASE)
+
+
+def detect_review(title: str | None, *type_hints: str | None) -> bool:
+    """Surveys / reviews: from the source's document type or the title wording."""
+    if any(h and "review" in h.lower() for h in type_hints):
+        return True
+    return bool(_REVIEW_TITLE.search(title or ""))
+
+
 def finalize_record(paper: dict) -> dict:
     """Normalize DOI, assign id, make sure list fields exist."""
     p = dict(paper)
@@ -97,5 +113,8 @@ def finalize_record(paper: dict) -> dict:
     p["_sources"] = list(dict.fromkeys(p.get("_sources") or [p.get("_source") or "unknown"]))
     p.pop("_source", None)
     p.setdefault("found_in", [])
+    p.setdefault("openalexId", None)
+    if "is_review" not in p:
+        p["is_review"] = detect_review(p["title"])
     p["id"] = paper_key(p)
     return p

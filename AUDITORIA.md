@@ -126,7 +126,7 @@ Enfoque elegido: la herramienta se usa **solo para tu revisión** (recolección,
 | Hacía falta conda (V6) | ✅ `install.bat` / `install.sh` usan `.venv` + `requirements.txt` con versiones fijadas y PyTorch CPU. `environment.yml` eliminado. |
 | Se perdían los descartados (§3.1) | ✅ Ya no se borra nada: los problemas de calidad son `flags` y la relevancia es un `score` para ordenar. El *citation floor* está desactivado por defecto. |
 | Sin trazabilidad PRISMA (§6.1) | ✅ Cada búsqueda o importación guarda `sessions/<id>/session.json` (consulta, fecha, años, conteos por fuente, duplicados, errores, config). La barra lateral muestra identificados → duplicados → a revisar. |
-| Semantic Scholar 429 (V1) | ✅ Reintentos con backoff y `Retry-After`. Si falla, sigue con OpenAlex y lo registra. **Pide tu API key gratuita.** |
+| Semantic Scholar 429 (V1) | ✅ Semantic Scholar **eliminado** (ronda 2): sin API key fallaba casi siempre. OpenAlex cubre la búsqueda, es gratis y no pide key; tiene reintentos con backoff. |
 | Modelo solo en inglés (§6.2) | ✅ `intfloat/multilingual-e5-small`: contexto o preguntas en español emparejan papers en inglés (medido: dentro del tema ≈0.85, fuera ≈0.75). |
 | Scores no comparables (§3.3) | ✅ El contexto vive a nivel de proyecto; al cambiarlo se re-puntúa toda la biblioteca (262 papers en 0.3 s). |
 | Modelo recargado en cada petición (§3.4) | ✅ Una sola instancia por proceso, precargada al arrancar. ChromaDB reemplazado por una caché `.npz` por proyecto. |
@@ -137,6 +137,28 @@ Enfoque elegido: la herramienta se usa **solo para tu revisión** (recolección,
 | Código muerto y duplicado (§5) | ✅ Eliminados el evaluador de Claude, ChromaDB, dependencias sin uso y la lógica duplicada entre `scripts/` y backend: ahora los scripts son envoltorios de `src/pipeline.py`. |
 | Varios | ✅ Validación de nombres de proyecto (`..`), bloqueo por proyecto al escribir `papers.json`, escrituras atómicas, filtros por año, búsqueda de texto y orden en la UI, enlace a PDF abierto, procedencia de cada paper, 11 tests (`pytest`). |
 
-**Pendiente o fuera de alcance (a propósito):** *screening* dentro de la app (usa ASReview o Rayyan), *snowballing* de citas y validación formal de los umbrales. Los umbrales de categoría son heurísticos: úsalos para **ordenar**, no para excluir sin leer.
+**Pendiente o fuera de alcance (a propósito):** *screening* dentro de la app (usa ASReview o Rayyan) y validación formal de los umbrales. Los umbrales de categoría son heurísticos: úsalos para **ordenar**, no para excluir sin leer.
 
 **Ojo con la ambigüedad de términos:** en la prueba, la consulta "transformer" trajo también papers de *transformadores eléctricos*. El ranking por contexto los baja, pero revisa siempre tus cadenas de búsqueda.
+
+
+## 9. Ronda 2 (2026-11-15): exploración para elegir tema
+
+Restricciones: interfaz en inglés, nada de pago (sin IA de pago); en lugar de resúmenes con IA, palabras clave locales con embeddings.
+
+| Funcionalidad | Dónde |
+|---|---|
+| Semantic Scholar eliminado; solo OpenAlex (`sources.openalex.email` opcional para el *polite pool*) | `src/sources/openalex.py`, `config.yaml` |
+| ***Snowballing*** (referencias, citantes o ambos) desde el detalle de un paper. PRISMA separa *databases* y *citation searching* | `run_snowball` en `src/pipeline.py`, `PaperDetail.jsx`, `Sidebar.jsx` |
+| **Palabras clave por paper** (KeyBERT con el mismo modelo, local, ~6 s/100 papers). Se filtran frases de relleno ("datasets demonstrate") | `src/keywords.py`; chips clicables en tarjetas y detalle (filtran la biblioteca) |
+| **Etiquetas de clusters** a partir de esas palabras clave: las más distintivas de cada cluster (TF-IDF entre clusters), así el tema común a todos ("anomaly detection") no repite en cada etiqueta | `label_from_keywords`, `src/clustering.py` |
+| **Detección de surveys/reviews** (tipo de OpenAlex, tipo de documento de Scopus/WoS o título) | `detect_review`; badge *Review*, filtro *Surveys / reviews only*, tarjeta *Surveys* en la barra lateral |
+| **Lista de lectura**: estrella ☆ y notas por paper; sobreviven a búsquedas nuevas y se exportan en CSV/RIS | `annotate`; filtro *Starred only*, tarjeta *Reading list* |
+| **Pestaña Trends**: publicaciones por año en todo OpenAlex para un tema (con crecimiento últimos 3 años vs. 3 anteriores), tu biblioteca por año, tabla de temas por cluster (barras por año, % reciente, palabras clave emergentes, *read first*), palabras clave emergentes y surveys para leer primero | `TrendsView.jsx`, `GET /api/trend` |
+| **Pestaña Map**: mapa 2D (t-SNE) de los papers agrupados; color por cluster y número como segunda codificación | `MapView.jsx`, `points` en `clusters.json` |
+| **Reutilizar búsquedas** del historial (↻ reuse rellena el formulario) | `Sidebar.jsx`, `SearchPanel.jsx` |
+| **Ajustes recordados por proyecto** (pestaña, filtros, orden, sliders) y último proyecto abierto, en `localStorage` | `frontend/src/prefs.js` |
+| **Bibliotecas grandes**: se pintan 100 tarjetas y *Show more / Show all* | `PaperLibrary.jsx` |
+| **Sin pantallas en blanco**: cada zona (búsqueda, pestaña, barra lateral, detalle) tiene un *error boundary* con *Try again* | `ErrorBoundary.jsx` |
+
+**Cómo leer *Trends* para elegir tema:** el gráfico global mide cuánto se publica en todo OpenAlex (coincidencias en título y resumen); casi todo crece, así que compara temas entre sí, no contra cero. Lo de "tu biblioteca" depende de lo que buscaste. Las palabras clave emergentes son frases mucho más frecuentes en los últimos 3 años de tu biblioteca: son pistas, no conclusiones. Las secciones de *future work* de los surveys recientes son la mejor fuente de huecos de investigación.

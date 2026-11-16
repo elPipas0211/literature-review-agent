@@ -9,7 +9,6 @@ Design rules (see AUDITORIA.md):
   * The research context lives at project level; when it changes, the whole
     library is rescored so scores stay comparable.
 """
-import concurrent.futures
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -20,8 +19,8 @@ from src.embeddings.store import EmbeddingStore
 from src.evaluation.scoring import score_papers
 from src.filters.flags import compute_flags
 from src.importers.csv_import import parse_csv
+from src.keywords import extract_keywords
 from src.sources.openalex import OpenAlexClient
-from src.sources.semantic_scholar import SemanticScholarClient
 from src.storage.project_manager import ProjectManager
 from src.utils.bibtex_exporter import export_bibtex
 from src.utils.deduplication import dedupe_batch, merge_records, match_library
@@ -32,6 +31,13 @@ Emit = Callable[[dict], None]
 
 def _noop(_event: dict) -> None:
     pass
+
+
+def _openalex(config: dict, emit: Emit) -> OpenAlexClient:
+    return OpenAlexClient(
+        email=((config.get("sources") or {}).get("openalex") or {}).get("email") or None,
+        on_wait=lambda msg: emit({"type": "wait", "source": "openalex", "message": msg}),
+    )
 
 
 def _config_snapshot(config: dict) -> dict:
@@ -103,6 +109,11 @@ def _ingest(pm: ProjectManager, project: str, records_by_source: dict[str, list[
         if new:
             emit({"type": "embed", "count": len(new)})
         _rescore(pm, project, library, effective, config)
+        missing_kw = [p for p in library if p.get("keywords") is None]
+        if missing_kw:
+            emit({"type": "keywords", "count": len(missing_kw)})
+            extract_keywords(missing_kw, get_embedder(config),
+                             (config.get("keywords") or {}).get("per_paper", 5))
 
         cats = Counter((p.get("evaluation") or {}).get("category", "unevaluated")
                        for p in library if p["id"] in new_ids)
@@ -137,45 +148,19 @@ def run_search(project: str, query: str, context: str | None, max_results: int, 
     pm = ProjectManager(config["storage"]["projects_dir"])
     pm.init_project(project)
     session_id, session_path = pm.new_session(project, "search")
-    ss_cfg = config["sources"]["semantic_scholar"]
-    oa_cfg = config["sources"]["openalex"]
-
-    clients = {
-        "semantic_scholar": SemanticScholarClient(
-            api_key=ss_cfg.get("api_key") or None,
-            rate_limit_delay=ss_cfg.get("rate_limit_delay", 1.0),
-            on_wait=lambda msg: emit({"type": "wait", "source": "semantic_scholar", "message": msg}),
-        ),
-        "openalex": OpenAlexClient(email=oa_cfg.get("email") or None),
-    }
-    enabled = [n for n in clients if (config["sources"].get(n) or {}).get("enabled", True)]
-    emit({"type": "stage", "message": f"Searching for: {query}"})
-
-    def fetch(name):
-        emit({"type": "fetch_start", "source": name})
-        records = clients[name].search_all(query, max_results=max_results,
-                                           year_from=year_from, year_to=year_to)
-        pm.save_raw_results(session_path, name, records)
-        emit({"type": "fetch_done", "source": name, "retrieved": len(records)})
-        return records
-
-    records_by_source: dict[str, list[dict]] = {}
-    sources_info: dict[str, dict] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(enabled) or 1) as pool:
-        futures = {pool.submit(fetch, n): n for n in enabled}
-        for fut in concurrent.futures.as_completed(futures):
-            name = futures[fut]
-            try:
-                records_by_source[name] = fut.result()
-                sources_info[name] = {"retrieved": len(records_by_source[name]), "error": None}
-            except Exception as exc:  # one source failing must not kill the run
-                sources_info[name] = {"retrieved": 0, "error": str(exc)}
-                emit({"type": "error", "source": name, "message": str(exc)})
+    client = _openalex(config, emit)
+    emit({"type": "stage", "message": f"Searching OpenAlex for: {query}"})
+    emit({"type": "fetch_start", "source": "openalex"})
+    records = client.search_all(query, max_results=max_results, year_from=year_from, year_to=year_to)
+    pm.save_raw_results(session_path, "openalex", records)
+    emit({"type": "fetch_done", "source": "openalex", "retrieved": len(records)})
+    records_by_source = {"openalex": records}
+    sources_info = {"openalex": {"retrieved": len(records), "error": None}}
 
     session = {
         "session_id": session_id, "kind": "search", "started_at": datetime.now().isoformat(),
         "query": query, "year_from": year_from, "year_to": year_to,
-        "max_results_per_source": max_results, "sources": sources_info,
+        "max_results": max_results, "sources": sources_info,
     }
     return _ingest(pm, project, records_by_source, session, session_path, context, config, emit)
 
@@ -230,25 +215,134 @@ def semantic_query(project: str, question: str, top: int, config: dict) -> list[
 
 
 def prisma_summary(project: str, config: dict) -> dict:
-    """Numbers for the 'Identification' part of a PRISMA 2020 flow diagram."""
+    """
+    Numbers for the 'Identification' part of a PRISMA 2020 flow diagram.
+    Database searches / CSV imports and citation searching (snowballing) are
+    reported separately, as PRISMA 2020 asks.
+    """
     pm = ProjectManager(config["storage"]["projects_dir"])
     sessions = pm.list_sessions(project)
     library = pm.get_papers(project)
-    by_source: Counter = Counter()
-    for s in sessions:
-        for src, info in (s.get("sources") or {}).items():
-            by_source[src] += info.get("retrieved") or 0
+
+    def block(kinds):
+        chosen = [s for s in sessions if s.get("kind") in kinds]
+        by_source: Counter = Counter()
+        for s in chosen:
+            for src, info in (s.get("sources") or {}).items():
+                by_source[src] += info.get("retrieved") or 0
+        return {
+            "identified_by_source": dict(by_source),
+            "identified_total": sum(by_source.values()),
+            "duplicates_removed": sum((s.get("duplicates_within") or 0) + (s.get("already_in_library") or 0)
+                                      for s in chosen),
+            "added": sum(s.get("added") or 0 for s in chosen),
+        }
+
+    databases = block({"search", "import"})
+    citations = block({"snowball"})
     return {
-        "identified_by_source": dict(by_source),
-        "identified_total": sum(by_source.values()),
-        "duplicates_removed": sum((s.get("duplicates_within") or 0) + (s.get("already_in_library") or 0)
-                                  for s in sessions),
+        **databases,  # kept at top level for backwards compatibility
+        "databases": databases,
+        "citation_searching": citations,
         "records_in_library": len(library),
+        "reviews_in_library": sum(1 for p in library if p.get("is_review")),
+        "starred": sum(1 for p in library if p.get("starred")),
         "flagged": dict(Counter(f for p in library for f in p.get("flags") or [])),
         "by_category": dict(Counter((p.get("evaluation") or {}).get("category", "unevaluated")
                                     for p in library)),
         "sessions": [{k: s.get(k) for k in ("session_id", "kind", "started_at", "query", "file",
-                                             "year_from", "year_to", "sources", "identified",
-                                             "duplicates_within", "already_in_library", "added")}
+                                             "year_from", "year_to", "max_results", "seed", "direction",
+                                             "sources", "identified", "duplicates_within",
+                                             "already_in_library", "added")}
                      for s in sessions],
+    }
+
+
+# ── Snowballing (citation searching) ─────────────────────────────────────────
+
+def run_snowball(project: str, paper_id: str, direction: str, max_results: int, config: dict,
+                 emit: Emit = _noop) -> dict:
+    """Add the references of a paper (backward), the papers citing it (forward), or both."""
+    if direction not in ("references", "citations", "both"):
+        raise ValueError("direction must be references, citations or both")
+    pm = ProjectManager(config["storage"]["projects_dir"])
+    library = pm.get_papers(project)
+    seed = next((p for p in library if p["id"] == paper_id), None)
+    if seed is None:
+        raise ValueError(f"Paper {paper_id} is not in the project")
+    client = _openalex(config, emit)
+
+    work_id = seed.get("openalexId")
+    if not work_id:
+        emit({"type": "stage", "message": "Looking up the paper in OpenAlex…"})
+        work_id = client.find_work_id((seed.get("externalIds") or {}).get("DOI"), seed.get("title"))
+        if not work_id:
+            raise ValueError("This paper could not be found in OpenAlex, so its citations are unavailable.")
+        with pm.lock(project):  # remember it for next time
+            lib = pm.get_papers(project)
+            for p in lib:
+                if p["id"] == paper_id:
+                    p["openalexId"] = work_id
+            pm.save_papers(project, lib)
+
+    title = (seed.get("title") or "")[:80]
+    session_id, session_path = pm.new_session(project, "snowball")
+    records: list[dict] = []
+    if direction in ("references", "both"):
+        emit({"type": "fetch_start", "source": "references"})
+        refs = client.references(work_id, max_results)
+        emit({"type": "fetch_done", "source": "references", "retrieved": len(refs)})
+        records += refs
+    if direction in ("citations", "both"):
+        emit({"type": "fetch_start", "source": "citations"})
+        cites = client.citing(work_id, max_results)
+        emit({"type": "fetch_done", "source": "citations", "retrieved": len(cites)})
+        records += cites
+    for r in records:
+        r["_source"] = "citation_search"
+    pm.save_raw_results(session_path, "citation_search", records)
+    label = {"references": "references of", "citations": "papers citing", "both": "citations of"}[direction]
+    session = {
+        "session_id": session_id, "kind": "snowball", "started_at": datetime.now().isoformat(),
+        "query": f"{label}: {title}", "seed": paper_id, "direction": direction, "max_results": max_results,
+        "sources": {"citation_search": {"retrieved": len(records), "error": None}},
+    }
+    return _ingest(pm, project, {"citation_search": records}, session, session_path, None, config, emit)
+
+
+# ── Reading list ─────────────────────────────────────────────────────────────
+
+def annotate(project: str, paper_id: str, config: dict, starred: bool | None = None,
+             note: str | None = None) -> dict:
+    pm = ProjectManager(config["storage"]["projects_dir"])
+    with pm.lock(project):
+        library = pm.get_papers(project)
+        for p in library:
+            if p["id"] == paper_id:
+                if starred is not None:
+                    p["starred"] = bool(starred)
+                if note is not None:
+                    p["note"] = note.strip()
+                pm.save_papers(project, library)
+                return {"id": paper_id, "starred": p.get("starred", False), "note": p.get("note", "")}
+    raise ValueError(f"Paper {paper_id} is not in the project")
+
+
+# ── Global trends ────────────────────────────────────────────────────────────
+
+def global_trend(query: str, config: dict, year_from: int | None = None, year_to: int | None = None) -> dict:
+    """Works per year in all of OpenAlex for a topic, plus a simple growth figure."""
+    counts = _openalex(config, _noop).yearly_counts(query, year_from, year_to)
+    this_year = datetime.now().year
+    full = {r["year"]: r["count"] for r in counts if r["year"] < this_year}
+    recent = sum(full.get(y, 0) for y in range(this_year - 3, this_year))
+    before = sum(full.get(y, 0) for y in range(this_year - 6, this_year - 3))
+    return {
+        "query": query,
+        "counts": counts,
+        "partial_year": this_year,
+        "recent_3y": recent,
+        "previous_3y": before,
+        "growth": round(recent / before - 1, 3) if before else None,
+        "total": sum(r["count"] for r in counts),
     }

@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { downloadExport, streamClusters } from '../api/client.js'
 
-const SOURCE = { semantic_scholar: 'Semantic Scholar', openalex: 'OpenAlex', scopus_csv: 'Scopus (CSV)',
+const SOURCE = { semantic_scholar: 'Semantic Scholar (legacy)', openalex: 'OpenAlex', scopus_csv: 'Scopus (CSV)',
                  wos_csv: 'Web of Science (CSV)', zotero_csv: 'Zotero (CSV)' }
 
-function StatCards({ papers }) {
+function StatCards({ papers, onShowStarred, onShowReviews }) {
   const count = (c) => papers.filter((p) => p.evaluation?.category === c).length
+  const starred = papers.filter((p) => p.starred).length
+  const reviews = papers.filter((p) => p.is_review).length
   return (
     <section className="sidebar-section">
       <div className="sidebar-label">Collection</div>
@@ -14,23 +16,36 @@ function StatCards({ papers }) {
         <div className="stat-card relevant"><span className="stat-card-label">Relevant</span><span className="stat-card-number">{count('relevante')}</span></div>
         <div className="stat-card potential"><span className="stat-card-label">Potential</span><span className="stat-card-number">{count('potencialmente_relevante')}</span></div>
         <div className="stat-card"><span className="stat-card-label">Low</span><span className="stat-card-number">{count('no_relevante')}</span></div>
+        <button className="stat-card clickable" onClick={onShowStarred} disabled={!starred} title="Show the reading list">
+          <span className="stat-card-label">★ Reading list</span><span className="stat-card-number">{starred}</span></button>
+        <button className="stat-card clickable" onClick={onShowReviews} disabled={!reviews} title="Show surveys and reviews">
+          <span className="stat-card-label">Surveys</span><span className="stat-card-number">{reviews}</span></button>
       </div>
     </section>
   )
 }
 
-function Prisma({ prisma }) {
+function Prisma({ prisma, onReuseSearch }) {
   if (!prisma || !prisma.sessions?.length) return null
+  const db = prisma.databases || prisma
+  const cit = prisma.citation_searching
   return (
     <section className="sidebar-section">
       <div className="sidebar-label">PRISMA — identification</div>
       <table className="prisma-table">
         <tbody>
-          {Object.entries(prisma.identified_by_source).map(([s, n]) => (
+          {Object.entries(db.identified_by_source).map(([s, n]) => (
             <tr key={s}><td>Records from {SOURCE[s] || s}</td><td>{n}</td></tr>
           ))}
-          <tr className="sum"><td>Records identified</td><td>{prisma.identified_total}</td></tr>
-          <tr><td>Duplicates removed</td><td>−{prisma.duplicates_removed}</td></tr>
+          <tr><td>Duplicates removed</td><td>−{db.duplicates_removed}</td></tr>
+          {cit?.identified_total > 0 && (
+            <>
+              <tr className="sum"><td>From databases</td><td>{db.added}</td></tr>
+              <tr><td>Citation searching (snowballing)</td><td>{cit.identified_total}</td></tr>
+              <tr><td>Duplicates / already found</td><td>−{cit.duplicates_removed}</td></tr>
+              <tr className="sum"><td>From citation searching</td><td>{cit.added}</td></tr>
+            </>
+          )}
           <tr className="sum"><td>Records to screen</td><td>{prisma.records_in_library}</td></tr>
         </tbody>
       </table>
@@ -40,9 +55,13 @@ function Prisma({ prisma }) {
           {prisma.sessions.map((s) => (
             <li key={s.session_id}>
               <span className="session-date">{(s.started_at || '').slice(0, 16).replace('T', ' ')}</span>{' '}
-              {s.kind === 'import' ? `📄 ${s.file}` : `🔎 “${s.query}”`}
+              {s.kind === 'import' ? `📄 ${s.file}` : s.kind === 'snowball' ? `🔗 ${s.query}` : `🔎 “${s.query}”`}
               {(s.year_from || s.year_to) && ` [${s.year_from || ''}–${s.year_to || ''}]`}
               {' '}→ {s.identified} found, {s.added} new
+              {s.kind === 'search' && s.query && (
+                <button className="btn-text reuse-btn" title="Put this query back in the search box"
+                  onClick={() => onReuseSearch(s)}>↻ reuse</button>
+              )}
               {Object.entries(s.sources || {}).filter(([, v]) => v.error).map(([k]) => (
                 <span key={k} className="flag-chip">{SOURCE[k] || k} failed</span>
               ))}
@@ -181,13 +200,13 @@ function FilterSettings({ settings, defaults, onChange }) {
 
 export default function Sidebar({
   project, papers, visibleIds, prisma, clusters,
-  activeCluster, onClusterSelect, onClustersGenerated,
+  activeCluster, onClusterSelect, onClustersGenerated, onReuseSearch, onShowStarred, onShowReviews,
   filterSettings, defaults, onFilterSettings,
 }) {
   return (
     <>
-      <StatCards papers={papers} />
-      <Prisma prisma={prisma} />
+      <StatCards papers={papers} onShowStarred={onShowStarred} onShowReviews={onShowReviews} />
+      <Prisma prisma={prisma} onReuseSearch={onReuseSearch} />
       {project && <Exports project={project} total={papers.length} visibleIds={visibleIds} />}
       <div className="divider" />
       <ClusterFilter clusters={clusters} activeCluster={activeCluster} onSelect={onClusterSelect}

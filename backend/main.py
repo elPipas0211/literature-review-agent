@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import get_config
-from backend.routers import clusters, import_csv, papers, projects, query, search
+from backend.routers import clusters, import_csv, papers, projects, query, search, trends
 from src.embeddings.model import get_embedder
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -39,5 +39,5 @@ def public_config():
     return {"evaluation": cfg["evaluation"], "embeddings": {"model": cfg["embeddings"]["model"]}}
 
 
-for r in (projects, papers, search, import_csv, query, clusters):
+for r in (projects, papers, search, import_csv, query, clusters, trends):
     app.include_router(r.router)

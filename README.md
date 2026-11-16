@@ -2,7 +2,7 @@
 
 A local tool for the **identification** phase of a literature review. It does four things:
 
-1. **Collects** records from Semantic Scholar, OpenAlex and Scopus / Web of Science / Zotero CSV exports.
+1. **Collects** records from OpenAlex (free, no key), Scopus / Web of Science / Zotero CSV exports, and citation snowballing.
 2. **Merges duplicates** and keeps a PRISMA-ready log of every search.
 3. **Ranks** every paper by semantic similarity to your research question, using a multilingual model: write the question in Spanish, match English papers.
 4. **Exports** the library to CSV / RIS / BibTeX.
@@ -15,7 +15,7 @@ Screening (deciding what to include) is meant to happen in a dedicated tool such
 > to exclude, and you can report why.
 
 All data stays in `projects/` on your machine. The only network traffic goes to the public
-Semantic Scholar and OpenAlex APIs and, on first start, to Hugging Face to download the model
+OpenAlex API and, on first start, to Hugging Face to download the model
 (~470 MB).
 
 ---
@@ -28,8 +28,8 @@ Semantic Scholar and OpenAlex APIs and, on first start, to Hugging Face to downl
 2. **Run several searches** (English keywords work best), optionally restricted by year. Import
    your Scopus / WoS exports with **Import CSV**. Each run is logged under `sessions/` with the
    exact query, date, per-source counts and the config used.
-3. **Explore**: sort by score, filter by category, cluster, text or flags, and use **Ask** to ask
-   natural-language questions in Spanish or English.
+3. **Explore**: sort by score, filter by category, cluster, keyword, text, flags, stars or reviews,
+   check **Trends** and the **Map**, and use **Ask** to ask natural-language questions in Spanish or English.
 4. **Export**:
    - **CSV or RIS → ASReview / Rayyan** for title–abstract screening. Export the whole library,
      or only the current filtered view.
@@ -60,14 +60,31 @@ Manual start:
 cd frontend && npm run dev
 ```
 
-### Strongly recommended
+### Recommended
 
-- **Semantic Scholar API key** (free): <https://www.semanticscholar.org/product/api>. Without a
-  key the public pool answers HTTP 429 most of the time. The app retries 5 times, then continues
-  with OpenAlex only and reports the failure in the log and in the session record.
-- **OpenAlex email**: puts your requests in the faster "polite pool".
+- **OpenAlex email** in `config.yaml` (`sources.openalex.email`): puts your requests in the faster
+  "polite pool". No registration needed.
 
-Both go in `config.yaml`.
+### Choosing a topic: Trends, Map and the reading list
+
+- **Trends** tab. *How much is published on a topic?* gives works per year across all of OpenAlex
+  (title/abstract matches) and growth over the last 3 full years; use `"quotes"` for an exact
+  phrase. The tab also shows your library per year and a table of your clusters with per-year
+  bars, the share of recent papers, emerging keywords and the surveys to read first.
+- **Map** tab. A 2-D map (t-SNE) of the clustered papers: close dots are similar papers.
+- **Keywords.** Each paper gets up to 5 keyphrases, extracted locally with the same embedding
+  model (KeyBERT; no paid API). Click a keyword to filter the library by it.
+- **Surveys / reviews** are detected automatically (badge + filter). Read them first.
+- **Reading list.** Star papers (☆) and write notes in the paper panel. Stars and notes survive new
+  searches and go into the CSV/RIS exports.
+- **History.** In the sidebar, *↻ reuse* puts an old query back in the search box.
+- The app remembers each project's tab, filters, sort and scoring sliders in your browser.
+
+### Snowballing
+
+Open any paper → **← References** (older work it builds on), **Cited by →** (newer work citing it)
+or **Both**. Results go through the same deduplication and scoring, and PRISMA reports them as
+*citation searching*, separately from database searches.
 
 ---
 
@@ -133,13 +150,14 @@ projects/<project>/
 
 ```
 src/pipeline.py           search / import / rescore / query / PRISMA (used by API and CLI)
-src/sources/              Semantic Scholar (with retry/backoff), OpenAlex
+src/sources/openalex.py   OpenAlex search, snowballing, yearly trends (with retry/backoff)
 src/importers/            Scopus / WoS / Zotero CSV parser
 src/utils/                records & DOI normalization, deduplication, BibTeX, CSV/RIS
 src/embeddings/           shared model + per-project embedding cache
 src/evaluation/scoring.py relevance score
 src/filters/flags.py      quality flags
-src/clustering.py         K-Means + elbow + KeyBERT labels
+src/clustering.py         K-Means + elbow + labels + 2-D t-SNE map
+src/keywords.py           per-paper keyphrases (KeyBERT, local) and distinctive cluster labels
 backend/                  FastAPI (SSE streaming for long runs)
 frontend/                 React + Vite
 ```

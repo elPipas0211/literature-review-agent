@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-export default function SearchPanel({ onSearch, onApplyContext, isSearching, disabled, projectContext, project }) {
+export default function SearchPanel({ onSearch, onApplyContext, isSearching, disabled, projectContext, project, prefill }) {
   const [applying, setApplying] = useState(false)
   const [query, setQuery]       = useState('')
   const [context, setContext]   = useState(projectContext)
@@ -10,6 +10,17 @@ export default function SearchPanel({ onSearch, onApplyContext, isSearching, dis
 
   // The research context belongs to the project: reload it when the project changes.
   useEffect(() => { setContext(projectContext) }, [projectContext, project])
+
+  // "↻ reuse" from the search history puts an old query back in the form.
+  const queryRef = useRef(null)
+  useEffect(() => {
+    if (!prefill) return
+    setQuery(prefill.query || '')
+    setYearFrom(prefill.year_from ?? '')
+    setYearTo(prefill.year_to ?? '')
+    if (prefill.max_results) setMax(prefill.max_results)
+    queryRef.current?.focus()
+  }, [prefill])
 
   const canSearch = query.trim().length > 0 && !isSearching && !disabled
   const contextChanged = context.trim() !== (projectContext || '').trim()
@@ -30,6 +41,7 @@ export default function SearchPanel({ onSearch, onApplyContext, isSearching, dis
     <form className="search-panel" onSubmit={handleSubmit}>
       <div className="search-row">
         <input
+          ref={queryRef}
           className="input input-grow"
           placeholder="Search query (English works best) — e.g. anomaly detection industrial time series"
           value={query}
@@ -57,9 +69,9 @@ export default function SearchPanel({ onSearch, onApplyContext, isSearching, dis
           onChange={(e) => setYearFrom(e.target.value)} disabled={disabled} />
         <input type="number" className="input-number" placeholder="to" value={yearTo}
           onChange={(e) => setYearTo(e.target.value)} disabled={disabled} />
-        <span className="search-meta-label">Max / source</span>
-        <input type="number" className="input-number" min={10} max={1000} value={maxResults}
-          onChange={(e) => setMax(Math.min(1000, Math.max(10, Number(e.target.value) || 100)))}
+        <span className="search-meta-label">Max results</span>
+        <input type="number" className="input-number" min={10} max={2000} value={maxResults}
+          onChange={(e) => setMax(Math.min(2000, Math.max(10, Number(e.target.value) || 100)))}
           disabled={disabled} />
       </div>
       {contextChanged && !disabled && (

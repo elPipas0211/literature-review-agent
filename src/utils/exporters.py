@@ -13,7 +13,7 @@ _RIS_TYPES = {"article": "JOUR", "conference": "CONF", "chapter": "CHAP", "book"
 
 CSV_COLUMNS = ["id", "title", "abstract", "authors", "year", "venue", "doi", "url",
                "publication_type", "citations", "similarity", "semantic_score", "score",
-               "category", "flags", "sources", "queries"]
+               "category", "is_review", "starred", "note", "keywords", "flags", "sources", "queries"]
 
 
 def _row(p: dict) -> dict:
@@ -34,6 +34,10 @@ def _row(p: dict) -> dict:
         "semantic_score": ev.get("semantic_score", ""),
         "score": ev.get("score", ""),
         "category": ev.get("category", "unevaluated"),
+        "is_review": "yes" if p.get("is_review") else "",
+        "starred": "yes" if p.get("starred") else "",
+        "note": p.get("note") or "",
+        "keywords": "; ".join(p.get("keywords") or []),
         "flags": "; ".join(p.get("flags") or []),
         "sources": "; ".join(p.get("_sources") or []),
         "queries": " | ".join(dict.fromkeys(f.get("query") or "" for f in p.get("found_in") or [])),
@@ -67,7 +71,14 @@ def to_ris(papers: list[dict]) -> str:
             lines.append(f"UR  - {p['openAccessPdf']}")
         if p.get("abstract"):
             lines.append(f"AB  - {' '.join(p['abstract'].split())}")
+        lines += [f"KW  - {k}" for k in p.get("keywords") or []]
         note = []
+        if p.get("note"):
+            note.append(p["note"])
+        if p.get("starred"):
+            note.append("starred")
+        if p.get("is_review"):
+            note.append("review/survey")
         if ev:
             note.append(f"score={ev.get('score')} category={ev.get('category')}")
         if p.get("citationCount") is not None:

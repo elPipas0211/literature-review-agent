@@ -46,7 +46,8 @@ class Embedder:
 
     @property
     def dim(self) -> int:
-        return self.model.get_sentence_embedding_dimension()
+        getter = getattr(self.model, "get_embedding_dimension", None) or self.model.get_sentence_embedding_dimension
+        return getter()
 
 
 def get_embedder(config: dict) -> Embedder:

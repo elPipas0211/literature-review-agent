@@ -1,13 +1,13 @@
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from backend.common import require_project
+from backend.common import require_project, sse_job
 from backend.config import get_config
-from src.pipeline import prisma_summary
+from src.pipeline import annotate, prisma_summary, run_snowball
 from src.utils.bibtex_exporter import export_bibtex, library_bibtex
 from src.utils.exporters import to_csv, to_ris
 
@@ -55,3 +55,33 @@ def export(project: str, req: ExportRequest):
     filename = f"{project}_{datetime.now():%Y%m%d}.{req.format}"
     return Response(body, media_type=_MEDIA[req.format],
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+class AnnotateRequest(BaseModel):
+    id: str
+    starred: bool | None = None
+    note: str | None = None
+
+
+@router.post("/{project}/annotate")
+def annotate_paper(project: str, req: AnnotateRequest):
+    """Star a paper and/or save a note (reading list)."""
+    require_project(project)
+    try:
+        return annotate(project, req.id, get_config(), req.starred, req.note)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+class SnowballRequest(BaseModel):
+    id: str
+    direction: Literal["references", "citations", "both"] = "both"
+    max_results: int = Field(100, ge=1, le=1000)
+
+
+@router.post("/{project}/snowball")
+async def snowball(project: str, req: SnowballRequest):
+    """Citation searching: add a paper's references and/or the papers that cite it."""
+    require_project(project)
+    return sse_job(lambda emit: run_snowball(project, req.id, req.direction, req.max_results,
+                                             get_config(), emit))

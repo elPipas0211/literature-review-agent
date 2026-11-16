@@ -7,7 +7,7 @@ import io
 import re
 from pathlib import Path
 
-from src.utils.records import classify_publication_type, normalize_doi
+from src.utils.records import classify_publication_type, detect_review, normalize_doi
 
 csv.field_size_limit(10_000_000)
 
@@ -119,7 +119,9 @@ def parse_csv(path: str | Path) -> tuple[str, int, list[dict]]:
         if not title:
             continue
         doi = normalize_doi(_get(row, cmap["doi"]))
+        doc_type = _get(row, cmap["type"])
         records.append({
+            "is_review": detect_review(title, doc_type),
             "title": title,
             "abstract": _get(row, cmap["abstract"]),
             "externalIds": {"DOI": doi} if doi else {},
@@ -127,7 +129,7 @@ def parse_csv(path: str | Path) -> tuple[str, int, list[dict]]:
             "citationCount": _int(_get(row, cmap["citations"])) if cmap["citations"] else None,
             "authors": parse_authors(_get(row, cmap["authors_full"]), _get(row, cmap["authors"]), fmt),
             "venue": _get(row, cmap["venue"]),
-            "publicationType": classify_publication_type(_get(row, cmap["type"])),
+            "publicationType": classify_publication_type(doc_type),
             "openAccessPdf": None,
             "_source": f"{fmt}_csv",
         })

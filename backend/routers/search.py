@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/projects", tags=["search"])
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     context: str | None = None
-    max_results: int = Field(100, ge=1, le=1000)  # per source
+    max_results: int = Field(200, ge=1, le=2000)
     year_from: int | None = None
     year_to: int | None = None
 

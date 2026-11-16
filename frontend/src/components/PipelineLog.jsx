@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-const SOURCE = { semantic_scholar: 'Semantic Scholar', openalex: 'OpenAlex' }
+const SOURCE = { semantic_scholar: 'Semantic Scholar', openalex: 'OpenAlex', references: 'References', citations: 'Citing papers' }
 const src = (s) => SOURCE[s] || s
 
 export function describe(event) {
@@ -13,6 +13,7 @@ export function describe(event) {
     case 'dedup':       return ['log-line', `  ${event.identified} identified → ${event.within} duplicates merged, ${event.already} already in library → ${event.new} new`]
     case 'context':     return ['log-line warn', `  Research context updated — rescoring all ${event.rescoring} papers`]
     case 'embed':       return ['log-line', `  Embedding ${event.count} new papers…`]
+    case 'keywords':    return ['log-line', `  Extracting keywords for ${event.count} papers…`]
     case 'eval_done':   return ['log-line success', `  New papers: ${event.relevante || 0} relevant, ${event.potencialmente_relevante || 0} potential, ${event.no_relevante || 0} low`]
     case 'done':        return ['log-line success', `✓ Done — ${event.added} added, ${event.already} already present, library now ${event.total}`]
     case 'error':       return ['log-line error', `✗ Error${event.source ? ` (${src(event.source)})` : ''}: ${event.message}`]

@@ -91,3 +91,12 @@ export function streamImport(project, file, context, signal) {
 
 export const streamClusters = (project, params, signal) =>
   sse(`/projects/${enc(project)}/clusters`, { ...json('POST', params), signal })
+
+export const annotatePaper = (project, id, fields) =>
+  req(`/projects/${enc(project)}/annotate`, json('POST', { id, ...fields }))
+
+export const getTrend = (q, yearFrom = 2000) =>
+  req(`/trend?q=${enc(q)}&year_from=${yearFrom}`)
+
+export const streamSnowball = (project, params, signal) =>
+  sse(`/projects/${enc(project)}/snowball`, { ...json('POST', params), signal })
