@@ -34,8 +34,10 @@ def _noop(_event: dict) -> None:
 
 
 def _openalex(config: dict, emit: Emit) -> OpenAlexClient:
+    oa = (config.get("sources") or {}).get("openalex") or {}
     return OpenAlexClient(
-        email=((config.get("sources") or {}).get("openalex") or {}).get("email") or None,
+        email=oa.get("email") or None,
+        api_key=oa.get("api_key") or None,
         on_wait=lambda msg: emit({"type": "wait", "source": "openalex", "message": msg}),
     )
 

@@ -152,13 +152,13 @@ function ProjectSelector({ projects, currentProject, onProjectChange, onProjects
   )
 }
 
-export default function Masthead({ projects, currentProject, onProjectChange, onProjectsReload, onImport }) {
+export default function Masthead({ projects, currentProject, onProjectChange, onProjectsReload, onImport, onSettings, needsKey, onHome }) {
   return (
     <header className="masthead">
-      <div className="masthead-left">
-        <div className="masthead-title">The Literature Review</div>
-        <div className="masthead-tagline">Research Paper Management System</div>
-      </div>
+      <button className="masthead-left" onClick={onHome} title="All projects">
+        <span className="masthead-title">The Literature Review</span>
+        <span className="masthead-tagline">Find, rank and organize papers for your review</span>
+      </button>
       <div className="masthead-right">
         <ProjectSelector
           projects={projects}
@@ -166,8 +166,12 @@ export default function Masthead({ projects, currentProject, onProjectChange, on
           onProjectChange={onProjectChange}
           onProjectsReload={onProjectsReload}
         />
-        <button className="btn btn-ghost btn-sm" onClick={onImport} disabled={!currentProject}>
-          Import CSV
+        {currentProject && (
+          <button className="btn btn-ghost btn-sm" onClick={onImport}>Import CSV</button>
+        )}
+        <button className="btn btn-ghost btn-sm settings-btn" onClick={onSettings}
+          title={needsKey ? 'No OpenAlex API key: searches may be rate-limited' : 'Settings'}>
+          Settings{needsKey && <span className="attention-dot" aria-label="needs attention" />}
         </button>
       </div>
     </header>

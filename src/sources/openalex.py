@@ -1,9 +1,10 @@
 """
 OpenAlex Works API client: keyword search, citation snowballing and yearly trends.
 
-Free, no key. Abstracts arrive as inverted indexes and are rebuilt to plain
-text. Adding an email (config.yaml -> sources.openalex.email) puts requests in
-the faster "polite pool".
+Free. Without a key, OpenAlex rate-limits anonymous *search* when its servers
+are busy; a free API key (OPENALEX_API_KEY in .env, or the app's settings)
+avoids that. An email puts keyless requests in the "polite pool". Abstracts
+arrive as inverted indexes and are rebuilt to plain text.
 """
 import logging
 import time
@@ -19,6 +20,11 @@ BASE_URL = "https://api.openalex.org/works"
 _SELECT = ("id,title,abstract_inverted_index,publication_year,cited_by_count,doi,"
            "authorships,primary_location,type,open_access,referenced_works_count")
 _RETRY_STATUS = {429, 500, 502, 503, 504}
+_MAX_WAIT = 60  # seconds; never sleep longer than this on one retry
+
+
+class OpenAlexError(RuntimeError):
+    """A request failed after retries; the message is meant for the user."""
 
 
 def short_id(openalex_id: str | None) -> str | None:
@@ -59,28 +65,48 @@ def _normalize(work: dict) -> dict:
 
 class OpenAlexClient:
     def __init__(self, email: Optional[str] = None, rate_limit_delay: float = 0.15,
-                 on_wait: Callable[[str], None] | None = None):
+                 on_wait: Callable[[str], None] | None = None, api_key: Optional[str] = None):
         self._session = requests.Session()
         self._email = email
+        self._api_key = api_key
         self._delay = rate_limit_delay
         self._on_wait = on_wait or (lambda msg: None)
 
     def _get(self, url: str, params: dict) -> dict:
         params = dict(params)
+        if self._api_key:
+            params["api_key"] = self._api_key
         if self._email:
             params["mailto"] = self._email
         wait = 2.0
         for attempt in range(5):
-            resp = self._session.get(url, params=params, timeout=30)
+            try:
+                resp = self._session.get(url, params=params, timeout=30)
+            except requests.RequestException as exc:
+                if attempt == 4:
+                    raise OpenAlexError(f"Could not reach OpenAlex ({exc.__class__.__name__}). "
+                                        "Check your internet connection.") from exc
+                self._on_wait(f"OpenAlex unreachable, retrying in {wait:.0f}s")
+                time.sleep(wait)
+                wait *= 2
+                continue
             if resp.status_code not in _RETRY_STATUS:
+                if resp.status_code in (401, 403):
+                    raise OpenAlexError("OpenAlex rejected the API key. Check it in Settings (or .env).")
                 resp.raise_for_status()
                 time.sleep(self._delay)
                 return resp.json()
-            self._on_wait(f"OpenAlex HTTP {resp.status_code}, retrying in {wait:.0f}s")
-            time.sleep(wait)
+            if attempt == 4:
+                break
+            pause = min(_retry_after(resp) or wait, _MAX_WAIT)
+            self._on_wait(f"OpenAlex is busy (HTTP {resp.status_code}), retrying in {pause:.0f}s")
+            time.sleep(pause)
             wait *= 2
-        resp.raise_for_status()
-        return {}
+        if resp.status_code == 429:
+            hint = ("" if self._api_key else
+                    " Add a free OpenAlex API key in Settings to avoid this (openalex.org → sign up → API key).")
+            raise OpenAlexError(f"OpenAlex rate limit reached; try again in a minute.{hint}")
+        raise OpenAlexError(f"OpenAlex is not responding (HTTP {resp.status_code}); try again later.")
 
     def _paginate(self, params: dict, max_results: int) -> list[dict]:
         papers: list[dict] = []
@@ -146,3 +172,10 @@ class OpenAlexClient:
         out = [{"year": int(g["key"]), "count": g["count"]}
                for g in data.get("group_by") or [] if str(g.get("key", "")).isdigit()]
         return sorted(out, key=lambda r: r["year"])
+
+
+def _retry_after(resp: requests.Response) -> float | None:
+    try:
+        return float(resp.headers.get("Retry-After", ""))
+    except ValueError:
+        return None

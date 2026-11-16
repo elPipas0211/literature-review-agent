@@ -5,10 +5,12 @@
         --context "Detección de anomalías en sensores industriales" --max-results 200 --year-from 2015
 """
 import argparse
+import sys
 
 from _common import get_config, print_event
 
 from src.pipeline import run_search
+from src.sources.openalex import OpenAlexError
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--project", required=True)
@@ -18,5 +20,8 @@ ap.add_argument("--max-results", type=int, default=100, help="Max records (defau
 ap.add_argument("--year-from", type=int)
 ap.add_argument("--year-to", type=int)
 a = ap.parse_args()
-run_search(a.project, a.query, a.context, a.max_results, get_config(), print_event,
-           year_from=a.year_from, year_to=a.year_to)
+try:
+    run_search(a.project, a.query, a.context, a.max_results, get_config(), print_event,
+               year_from=a.year_from, year_to=a.year_to)
+except OpenAlexError as exc:
+    sys.exit(f"[error] {exc}")

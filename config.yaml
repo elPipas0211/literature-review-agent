@@ -1,7 +1,7 @@
 sources:
   openalex:
-    # Optional but recommended: your email puts requests in OpenAlex's faster
-    # "polite pool". No registration needed.
+    # Optional contact email. The API key is a secret, so it is NOT set here:
+    # use Settings in the app, or OPENALEX_API_KEY=... in .env (git-ignored).
     email: ""
 
 # Quality flags are LABELS ONLY: nothing is deleted. Turn the citation floor on

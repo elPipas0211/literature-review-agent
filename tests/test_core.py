@@ -152,3 +152,42 @@ def test_keyword_filter_and_cluster_labels():
     b = [{"keywords": shared + ["transformer"]}, {"keywords": shared + ["transformer"]}]
     labels = label_from_keywords([a, b], n=2)
     assert labels[0][0] == "autoencoder" and labels[1][0] == "transformer"
+
+
+def test_env_settings_roundtrip(tmp_path, monkeypatch):
+    import os
+    import backend.config as bc
+    monkeypatch.setattr(bc, "ENV_FILE", tmp_path / ".env")
+    monkeypatch.delenv("OPENALEX_API_KEY", raising=False)
+    monkeypatch.delenv("OPENALEX_EMAIL", raising=False)
+    (tmp_path / ".env").write_text("# local secrets\nOTHER=1\n", encoding="utf-8")
+    bc.save_openalex_settings(api_key="abc123")
+    assert bc.get_config()["sources"]["openalex"]["api_key"] == "abc123"
+    text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "OTHER=1" in text and "OPENALEX_API_KEY=abc123" in text
+    bc.save_openalex_settings(api_key="")  # remove
+    assert "OPENALEX_API_KEY" not in (tmp_path / ".env").read_text(encoding="utf-8")
+    assert bc.get_config()["sources"]["openalex"]["api_key"] is None
+    assert "OPENALEX_API_KEY" not in os.environ
+    bc._config = None
+
+
+def test_openalex_rate_limit_gives_clear_error(monkeypatch):
+    import pytest
+    from src.sources import openalex as oa
+
+    class Resp:
+        status_code = 429
+        headers = {"Retry-After": "0"}
+
+    client = oa.OpenAlexClient()
+    monkeypatch.setattr(client._session, "get", lambda *a, **k: Resp())
+    monkeypatch.setattr(oa.time, "sleep", lambda s: None)
+    with pytest.raises(oa.OpenAlexError, match="API key"):
+        client.search_all("x", 10)
+    keyed = oa.OpenAlexClient(api_key="k")
+    seen = {}
+    monkeypatch.setattr(keyed._session, "get", lambda url, params, timeout: seen.update(params) or Resp())
+    with pytest.raises(oa.OpenAlexError):
+        keyed.search_all("x", 10)
+    assert seen["api_key"] == "k"

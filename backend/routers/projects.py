@@ -1,4 +1,5 @@
 import shutil
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -13,6 +14,27 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 @router.get("")
 def list_projects():
     return get_pm().list_projects()
+
+
+@router.get("/summary")
+def project_summaries():
+    """One card per project for the start page, most recently changed first."""
+    pm = get_pm()
+    out = []
+    for name in pm.list_projects():
+        papers = pm.get_papers(name)
+        db = pm.papers_db_path(name)
+        sessions = pm.sessions_dir(name)
+        out.append({
+            "name": name,
+            "context": pm.get_meta(name).get("context", ""),
+            "papers": len(papers),
+            "relevant": sum(1 for p in papers if (p.get("evaluation") or {}).get("category") == "relevante"),
+            "starred": sum(1 for p in papers if p.get("starred")),
+            "searches": sum(1 for d in sessions.iterdir() if d.is_dir()) if sessions.exists() else 0,
+            "updated_at": datetime.fromtimestamp(db.stat().st_mtime).isoformat(timespec="minutes"),
+        })
+    return sorted(out, key=lambda x: x["updated_at"], reverse=True)
 
 
 class CreateRequest(BaseModel):

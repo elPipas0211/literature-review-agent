@@ -14,7 +14,7 @@ Screening (deciding what to include) is meant to happen in a dedicated tool such
 > citation counts become **flags**, and relevance becomes a **score** used for ordering. You decide what
 > to exclude, and you can report why.
 
-All data stays in `projects/` on your machine. The only network traffic goes to the public
+All data stays in `projects/` on your machine (and the optional API key in `.env`). The only network traffic goes to the public
 OpenAlex API and, on first start, to Hugging Face to download the model
 (~470 MB).
 
@@ -60,10 +60,16 @@ Manual start:
 cd frontend && npm run dev
 ```
 
-### Recommended
+### Recommended: a free OpenAlex API key
 
-- **OpenAlex email** in `config.yaml` (`sources.openalex.email`): puts your requests in the faster
-  "polite pool". No registration needed.
+When OpenAlex is busy it rate-limits searches made without a key, and they fail with
+"rate limit reached". A free key avoids that:
+
+1. Sign up at <https://openalex.org/rest-api> and copy your API key.
+2. In the app, click **Settings** (top right) and paste it. It is saved in `.env` in the project
+   folder, which git ignores. You can also write `OPENALEX_API_KEY=...` in `.env` yourself.
+
+The same dialog takes an optional contact email (`OPENALEX_EMAIL`).
 
 ### Choosing a topic: Trends, Map and the reading list
 

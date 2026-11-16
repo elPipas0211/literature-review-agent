@@ -1,18 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
 
-export default function SearchPanel({ onSearch, onApplyContext, isSearching, disabled, projectContext, project, prefill }) {
+export default function SearchPanel({ onSearch, onApplyContext, isSearching, disabled, projectContext, project, prefill, focusRequest }) {
   const [applying, setApplying] = useState(false)
+  const queryRef = useRef(null)
+  const contextRef = useRef(null)
   const [query, setQuery]       = useState('')
   const [context, setContext]   = useState(projectContext)
   const [maxResults, setMax]    = useState(100)
   const [yearFrom, setYearFrom] = useState('')
   const [yearTo, setYearTo]     = useState('')
 
-  // The research context belongs to the project: reload it when the project changes.
+  // The research question belongs to the project: reload it when the project changes.
+  // Once written it is shown as one line; "Edit" opens the text box again.
+  const [editingContext, setEditingContext] = useState(!projectContext)
   useEffect(() => { setContext(projectContext) }, [projectContext, project])
+  useEffect(() => { setEditingContext(!projectContext) }, [project, projectContext])
+
+  const editContext = () => { setEditingContext(true); setTimeout(() => contextRef.current?.focus(), 0) }
+
+  // Requests from the empty-project checklist: { target: 'search' | 'context', nonce }.
+  useEffect(() => {
+    if (!focusRequest) return
+    if (focusRequest.target === 'context') editContext()
+    else queryRef.current?.focus()
+  }, [focusRequest])
 
   // "↻ reuse" from the search history puts an old query back in the form.
-  const queryRef = useRef(null)
   useEffect(() => {
     if (!prefill) return
     setQuery(prefill.query || '')
@@ -53,16 +66,25 @@ export default function SearchPanel({ onSearch, onApplyContext, isSearching, dis
           {isSearching ? 'Searching…' : 'Search'}
         </button>
       </div>
-      <div className="search-meta">
-        <textarea
-          className="input input-grow context-input"
-          rows={2}
-          placeholder="Research context / question — Spanish or English. Used to rank every paper in the project."
-          value={context}
-          onChange={(e) => setContext(e.target.value)}
-          disabled={disabled}
-        />
-      </div>
+      {editingContext ? (
+        <div className="search-meta">
+          <textarea
+            ref={contextRef}
+            className="input input-grow context-input"
+            rows={2}
+            placeholder="Research question — Spanish or English. Used to rank every paper in the project."
+            value={context}
+            onChange={(e) => setContext(e.target.value)}
+            disabled={disabled}
+          />
+        </div>
+      ) : (
+        <div className="context-summary">
+          <span className="search-meta-label">Research question</span>
+          <span className="context-text" title={projectContext}>{projectContext}</span>
+          <button type="button" className="btn-text" onClick={editContext}>Edit</button>
+        </div>
+      )}
       <div className="search-meta">
         <span className="search-meta-label">Years</span>
         <input type="number" className="input-number" placeholder="from" value={yearFrom}
@@ -74,16 +96,26 @@ export default function SearchPanel({ onSearch, onApplyContext, isSearching, dis
           onChange={(e) => setMax(Math.min(2000, Math.max(10, Number(e.target.value) || 100)))}
           disabled={disabled} />
       </div>
-      {contextChanged && !disabled && (
+      {editingContext && contextChanged && !disabled && (
         <p className="hint">
-          Changing the context rescores the whole library against the new text (applied on the next search, or now:{' '}
-          <button type="button" className="btn-text" disabled={applying || isSearching}
-            onClick={async () => { setApplying(true); try { await onApplyContext(context.trim()) } finally { setApplying(false) } }}>
-            {applying ? 'rescoring…' : 'apply & rescore'}
-          </button>)
+          {projectContext ? 'Changing the question rescores the whole library. ' : ''}
+          <button type="button" className="btn-text" disabled={applying || isSearching || !context.trim()}
+            onClick={async () => {
+              setApplying(true)
+              try { await onApplyContext(context.trim()); setEditingContext(false) } finally { setApplying(false) }
+            }}>
+            {applying ? 'saving…' : projectContext ? 'Save and rescore' : 'Save question'}
+          </button>
+          {projectContext && (
+            <> · <button type="button" className="btn-text"
+              onClick={() => { setContext(projectContext); setEditingContext(false) }}>Cancel</button></>
+          )}
+          {' '}(otherwise it is saved with the next search)
         </p>
       )}
-      {disabled && <p className="hint">Select or create a project in the header to start.</p>}
+      {editingContext && !contextChanged && projectContext && (
+        <p className="hint"><button type="button" className="btn-text" onClick={() => setEditingContext(false)}>Done</button></p>
+      )}
     </form>
   )
 }

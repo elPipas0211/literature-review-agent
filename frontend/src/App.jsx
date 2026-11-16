@@ -14,8 +14,10 @@ import PaperLibrary  from './components/PaperLibrary.jsx'
 import PipelineLog   from './components/PipelineLog.jsx'
 import SearchPanel   from './components/SearchPanel.jsx'
 import SemanticQuery from './components/SemanticQuery.jsx'
+import SettingsModal from './components/SettingsModal.jsx'
 import Sidebar       from './components/Sidebar.jsx'
 import TrendsView    from './components/TrendsView.jsx'
+import WelcomeScreen, { EmptyProject } from './components/WelcomeScreen.jsx'
 
 // ── Client-side re-scoring ─────────────────────────────────────────────────────
 // Mirrors src/evaluation/scoring.py so weights/thresholds can be tuned live.
@@ -85,6 +87,10 @@ export default function App() {
   const [showImport, setShowImport]         = useState(false)
   const [prefill, setPrefill]               = useState(null)
   const [annotateError, setAnnotateError]   = useState(null)
+  const [openalex, setOpenalex]             = useState(null)   // { has_key, email }
+  const [showSettings, setShowSettings]     = useState(false)
+  const [dataLoaded, setDataLoaded]         = useState(false)
+  const [focusRequest, setFocusRequest]     = useState(null)   // checklist → search panel
   const searchCtrl = useRef(null)
   const prefsFor = useRef('')      // project whose preferences are currently loaded
   const scrollRef = useRef(null)
@@ -98,6 +104,7 @@ export default function App() {
   useEffect(() => {
     getConfig().then((c) => {
       setEvalConfig(c.evaluation)
+      setOpenalex(c.openalex || null)
       setFilterSettings((prev) => prev ?? settingsFromConfig(c.evaluation))
     }).catch(console.error)
     loadProjects().then((list) => {
@@ -154,12 +161,13 @@ export default function App() {
       getClusters(p).then(setClusters),
       getPrisma(p).then(setPrisma),
       getMeta(p).then(setMeta),
-    ]).catch(console.error)
+    ]).catch(console.error).finally(() => setDataLoaded(true))
   }
 
   // Project switch: load its data and its remembered view/scoring settings.
   useEffect(() => {
     setActiveCluster(null); setSelectedId(null); setSearchLogs([]); setTextFilter(''); setPrefill(null)
+    setDataLoaded(false); setRawPapers([])
     if (project) savePref('lastProject', project)
     const stored = project ? loadPref(`project:${project}`) : null
     prefsFor.current = project
@@ -223,6 +231,9 @@ export default function App() {
 
   const showCluster = (id) => { setActiveCluster(id); setActiveTab('library') }
 
+  const needsKey = openalex != null && !openalex.has_key
+  const libraryEmpty = dataLoaded && allPapers.length === 0
+
   const tabBadge = allPapers.length === 0 ? null
     : displayPapers.length < allPapers.length ? `${displayPapers.length}/${allPapers.length}`
     : `${allPapers.length}`
@@ -240,9 +251,20 @@ export default function App() {
         onProjectChange={setProject}
         onProjectsReload={loadProjects}
         onImport={() => setShowImport(true)}
+        onSettings={() => setShowSettings(true)}
+        needsKey={needsKey}
+        onHome={() => setProject('')}
       />
 
-      <div className="main-layout">
+      {!project ? (
+        <main className="welcome-layout">
+          <ErrorBoundary area="the start page">
+            <WelcomeScreen onOpen={setProject} onProjectsReload={loadProjects}
+              needsKey={needsKey} onSettings={() => setShowSettings(true)} />
+          </ErrorBoundary>
+        </main>
+      ) : (
+      <div className={`main-layout${libraryEmpty ? ' no-sidebar' : ''}`}>
         <div className="main-column">
           <ErrorBoundary area="the search panel">
             <SearchPanel
@@ -253,6 +275,7 @@ export default function App() {
               projectContext={meta?.context || ''}
               project={project}
               prefill={prefill}
+              focusRequest={focusRequest}
             />
           </ErrorBoundary>
 
@@ -275,7 +298,13 @@ export default function App() {
                 <button className="btn-text" onClick={() => setAnnotateError(null)}>dismiss</button></p>
             )}
             <ErrorBoundary key={activeTab} area={`the ${TABS.find((t) => t.key === activeTab)?.label || ''} tab`}>
-              {activeTab === 'library' && (
+              {activeTab === 'library' && libraryEmpty && (
+                <EmptyProject hasQuestion={!!meta?.context} needsKey={needsKey}
+                  onEditQuestion={() => setFocusRequest({ target: 'context', nonce: Date.now() })}
+                  onFocusSearch={() => setFocusRequest({ target: 'search', nonce: Date.now() })}
+                  onImport={() => setShowImport(true)} onSettings={() => setShowSettings(true)} />
+              )}
+              {activeTab === 'library' && !libraryEmpty && (
                 <PaperLibrary
                   papers={displayPapers}
                   scopedPapers={scopedPapers}
@@ -313,7 +342,7 @@ export default function App() {
           </div>
         </div>
 
-        <aside className="sidebar">
+        {!libraryEmpty && <aside className="sidebar">
           <ErrorBoundary area="the sidebar">
             <Sidebar
               project={project}
@@ -332,8 +361,9 @@ export default function App() {
               onFilterSettings={setFilterSettings}
             />
           </ErrorBoundary>
-        </aside>
+        </aside>}
       </div>
+      )}
 
       {selectedPaper && (
         <ErrorBoundary area="the paper detail">
@@ -342,6 +372,10 @@ export default function App() {
             onAnnotate={(fields) => handleAnnotate(selectedPaper.id, fields)}
             onKeyword={(k) => { setSelectedId(null); setTextFilter(k); setActiveTab('library') }} />
         </ErrorBoundary>
+      )}
+
+      {showSettings && (
+        <SettingsModal status={openalex} onClose={() => setShowSettings(false)} onSaved={setOpenalex} />
       )}
 
       {showImport && (

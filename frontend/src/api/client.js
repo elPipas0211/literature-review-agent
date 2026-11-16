@@ -26,8 +26,10 @@ const json = (method, body) => ({
 })
 
 export const getConfig     = () => req('/config')
+export const saveOpenAlexSettings = (fields) => req('/settings/openalex', json('PUT', fields))
 export const getProjects   = () => req('/projects')
-export const createProject = (name) => req('/projects', json('POST', { name }))
+export const createProject = (name, context = '') => req('/projects', json('POST', { name, context }))
+export const getProjectSummaries = () => req('/projects/summary')
 export const renameProject = (name, newName) => req(`/projects/${enc(name)}`, json('PATCH', { new_name: newName }))
 export const deleteProject = (name) => req(`/projects/${enc(name)}`, { method: 'DELETE' })
 export const getMeta       = (project) => req(`/projects/${enc(project)}/meta`)

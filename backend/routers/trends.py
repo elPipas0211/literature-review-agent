@@ -12,4 +12,4 @@ def trend(q: str = Query(min_length=2), year_from: int | None = 2000, year_to: i
     try:
         return global_trend(q, get_config(), year_from, year_to)
     except Exception as exc:
-        raise HTTPException(502, f"OpenAlex error: {exc}")
+        raise HTTPException(502, str(exc))
