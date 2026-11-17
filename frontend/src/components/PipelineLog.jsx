@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react'
 
-const SOURCE = { semantic_scholar: 'Semantic Scholar', openalex: 'OpenAlex', references: 'References', citations: 'Citing papers' }
+const SOURCE = { openalex: 'OpenAlex', references: 'References', citations: 'Citing papers' }
 const src = (s) => SOURCE[s] || s
 
 export function describe(event) {
   switch (event.type) {
     case 'stage':       return ['log-line', `▸ ${event.message}`]
     case 'fetch_start': return ['log-line fetch', `  Fetching from ${src(event.source)}…`]
+    case 'fetch_progress': return ['log-line fetch', `  ${src(event.source)}: ${event.retrieved} records so far…`]
+    case 'cancelled':   return ['log-line warn', '✗ Cancelled. Nothing from this run was added, unless it had already reached “Saving…”.']
     case 'fetch_done':  return ['log-line fetch', `  ${src(event.source)}: ${event.retrieved} records`]
     case 'wait':        return ['log-line warn', `  ${event.message}`]
     case 'parse':       return ['log-line', `  Parsed ${event.rows} rows (${event.format?.toUpperCase()}), ${event.records} records with title`]
@@ -22,7 +24,7 @@ export function describe(event) {
   }
 }
 
-export default function PipelineLog({ logs, isRunning }) {
+export default function PipelineLog({ logs, isRunning, onCancel }) {
   const bottomRef = useRef(null)
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, [logs])
 
@@ -31,6 +33,9 @@ export default function PipelineLog({ logs, isRunning }) {
       <div className="pipeline-log-header">
         {isRunning && <span className="spinner" />}
         Pipeline
+        {isRunning && onCancel && (
+          <button className="btn btn-outline btn-sm log-cancel" onClick={onCancel}>Cancel</button>
+        )}
       </div>
       <div className="pipeline-log-body">
         {logs.map((event, i) => {

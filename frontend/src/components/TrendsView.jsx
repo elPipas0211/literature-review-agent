@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getTrend } from '../api/client.js'
-import { Spark, YearBars } from './charts.jsx'
+import { SERIES, Spark, YearBars } from './charts.jsx'
 import { clusterColor } from './MapView.jsx'
 
 const NOW = new Date().getFullYear()
@@ -122,7 +122,7 @@ export default function TrendsView({ papers, clusters, onShowCluster, onOpen }) 
       <section className="trend-section">
         <h3>Your library per year <span className="hint">({papers.length} papers)</span></h3>
         {libraryYears.length ? (
-          <YearBars data={libraryYears} partialYear={NOW} label="papers" color="#6250d6" />
+          <YearBars data={libraryYears} partialYear={NOW} label="papers" color={SERIES[6]} />
         ) : <p className="hint">No papers yet.</p>}
         <p className="hint">Reflects what you searched and imported, not the field as a whole.</p>
       </section>

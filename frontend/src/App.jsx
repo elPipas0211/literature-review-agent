@@ -4,6 +4,7 @@ import {
   streamSearch, streamSnowball,
 } from './api/client.js'
 import { loadPref, savePref } from './prefs.js'
+import { recompute, settingsFromConfig } from './scoring.js'
 
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ImportModal   from './components/ImportModal.jsx'
@@ -17,39 +18,8 @@ import SemanticQuery from './components/SemanticQuery.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import Sidebar       from './components/Sidebar.jsx'
 import TrendsView    from './components/TrendsView.jsx'
+import ValidationView from './components/ValidationView.jsx'
 import WelcomeScreen, { EmptyProject } from './components/WelcomeScreen.jsx'
-
-// ── Client-side re-scoring ─────────────────────────────────────────────────────
-// Mirrors src/evaluation/scoring.py so weights/thresholds can be tuned live.
-// Nothing is ever removed: the category is only a label used for filtering.
-function recompute(papers, s, simRange) {
-  if (!s || !simRange) return papers
-  const [lo, hi] = simRange
-  return papers.map((paper) => {
-    const ev = paper.evaluation
-    if (!ev || ev.similarity == null) return paper
-    const sem = Math.min(1, Math.max(0, (ev.similarity - lo) / Math.max(hi - lo, 1e-9)))
-    const imp = Math.min(Math.log1p(Math.max(0, paper.citationCount || 0)) / Math.log1p(Math.max(1, s.citationRef)), 1)
-    const score = s.weightSemantic * sem + (1 - s.weightSemantic) * imp
-    const category =
-      score >= s.thresholdRelevant ? 'relevante'
-      : score >= s.thresholdPotential ? 'potencialmente_relevante'
-      : 'no_relevante'
-    return {
-      ...paper,
-      evaluation: { ...ev, semantic_score: sem, impact_score: imp, score, category },
-    }
-  })
-}
-
-export function settingsFromConfig(ev) {
-  return {
-    weightSemantic:     ev.weights.semantic,
-    citationRef:        ev.citation_ref,
-    thresholdRelevant:  ev.thresholds.relevant,
-    thresholdPotential: ev.thresholds.potentially,
-  }
-}
 
 const SORTERS = {
   score:     (p) => p.evaluation?.score ?? -1,
@@ -62,6 +32,7 @@ const TABS = [
   { key: 'map',     label: 'Map' },
   { key: 'trends',  label: 'Trends' },
   { key: 'query',   label: 'Ask' },
+  { key: 'validate', label: 'Validate' },
 ]
 
 const DEFAULT_VIEW = {
@@ -200,14 +171,30 @@ export default function App() {
     setSearchLogs([])
     try {
       for await (const event of open(ctrl.signal)) {
-        setSearchLogs((prev) => [...prev, event])
+        // Page-by-page progress replaces the previous progress line instead of piling up.
+        setSearchLogs((prev) => (event.type === 'fetch_progress' && prev.at(-1)?.type === 'fetch_progress'
+          ? [...prev.slice(0, -1), event] : [...prev, event]))
         if (event.type === 'result') await loadProjectData()
       }
     } catch (err) {
-      if (err.name !== 'AbortError') setSearchLogs((prev) => [...prev, { type: 'error', message: err.message }])
+      if (err.name === 'AbortError') {
+        if (ctrl.cancelledByUser) {
+          setSearchLogs((prev) => [...prev, { type: 'cancelled' }])
+          loadProjectData()  // show the real state (a run already saving is kept)
+        }
+      } else {
+        setSearchLogs((prev) => [...prev, { type: 'error', message: err.message }])
+      }
     } finally {
-      setIsSearching(false)
+      if (searchCtrl.current === ctrl) setIsSearching(false)
     }
+  }
+
+  const cancelRun = () => {
+    const ctrl = searchCtrl.current
+    if (!ctrl) return
+    ctrl.cancelledByUser = true
+    ctrl.abort()
   }
 
   // Reading list: optimistic update, rolled back if the server refuses.
@@ -279,7 +266,7 @@ export default function App() {
             />
           </ErrorBoundary>
 
-          {searchLogs.length > 0 && <PipelineLog logs={searchLogs} isRunning={isSearching} />}
+          {searchLogs.length > 0 && <PipelineLog logs={searchLogs} isRunning={isSearching} onCancel={cancelRun} />}
 
           <div className="tab-bar" role="tablist">
             {TABS.map((t) => (
@@ -338,6 +325,10 @@ export default function App() {
                 <TrendsView papers={allPapers} clusters={clusters} onShowCluster={showCluster} onOpen={openById} />
               )}
               {activeTab === 'query' && <SemanticQuery project={project} onOpen={openById} />}
+              {activeTab === 'validate' && filterSettings && (
+                <ValidationView project={project} papers={allPapers} meta={meta} settings={filterSettings}
+                  onAnnotate={handleAnnotate} onReload={() => loadProjectData()} />
+              )}
             </ErrorBoundary>
           </div>
         </div>

@@ -57,7 +57,8 @@ def _pick(candidates: list[tuple[str, float]], n: int) -> list[str]:
     return out
 
 
-def extract_keywords(papers: list[dict], embedder: Embedder, per_paper: int = 5) -> None:
+def extract_keywords(papers: list[dict], embedder: Embedder, per_paper: int = 5,
+                     on_progress=None) -> None:
     """Fill paper['keywords'] in place for papers that don't have them yet."""
     from keybert import KeyBERT
     from sklearn.feature_extraction.text import CountVectorizer
@@ -79,6 +80,8 @@ def extract_keywords(papers: list[dict], embedder: Embedder, per_paper: int = 5)
             results = [results]
         for paper, cands in zip(todo[start:start + 200], results):
             paper["keywords"] = _pick(cands or [], per_paper)
+        if on_progress:
+            on_progress(min(start + 200, len(docs)), len(docs))
 
 
 def label_from_keywords(groups: list[list[dict]], n: int = 3) -> list[list[str]]:

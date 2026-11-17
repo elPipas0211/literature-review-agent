@@ -86,6 +86,15 @@ The same dialog takes an optional contact email (`OPENALEX_EMAIL`).
 - **History.** In the sidebar, *↻ reuse* puts an old query back in the search box.
 - The app remembers each project's tab, filters, sort and scoring sliders in your browser.
 
+### Long runs
+
+A running search, import or snowballing can be stopped with **Cancel** in the pipeline log. A
+cancelled run leaves nothing behind (no papers, no PRISMA entry) unless it had already reached
+*Saving…*. **Recompute keywords** (sidebar, under Clusters) re-extracts every paper's keyphrases;
+regenerate the clusters afterwards to refresh their labels.
+
+Settings also has an **Appearance** switch (match system / light / dark).
+
 ### Snowballing
 
 Open any paper → **← References** (older work it builds on), **Cited by →** (newer work citing it)
@@ -107,9 +116,23 @@ or **Both**. Results go through the same deduplication and scoring, and PRISMA r
 The **Scoring settings** sliders change weights and thresholds live in the browser. Permanent
 defaults live in `config.yaml`.
 
-These thresholds are heuristics, not validated cut-offs. Use the score to **order** your
+These thresholds are heuristics until you check them. Use the score to **order** your
 screening, not to exclude papers without reading them. If you report the tool in your methods,
 say it was used for ranking and deduplication.
+
+### Checking the ranking (Validate tab)
+
+1. **Draw random sample** (e.g. 50 papers). It is a simple random sample of the library, so the
+   estimates hold for the whole library.
+2. Label each paper **Relevant / Not relevant / Unsure** (keys `R`, `N`, `U`; `Z` undoes) from
+   its title and abstract. The score is hidden while you label.
+3. The tab reports the **AUC** (how well the score separates the two groups), and for each
+   threshold the papers you would screen, **recall** (with a 95% interval), precision and the
+   relevant papers missed, plus the threshold that keeps ≥ 95% of the relevant papers. Move the
+   sliders and the numbers update. A **Copy** button gives a paragraph for your methods section.
+
+Labels are stored with the project and exported in the CSV `validation` column. Add 25 more
+papers at a time when the interval is too wide.
 
 | Flag | Meaning |
 |---|---|
@@ -131,7 +154,8 @@ python scripts/export.py     --project tesis --format ris --out tesis.ris
 python scripts/export.py     --project tesis --prisma
 ```
 
-Run them with the venv's Python (`.venv\Scripts\python` on Windows). Tests: `python -m pytest tests`.
+Run them with the venv's Python (`.venv\Scripts\python` on Windows). Tests: `python -m pytest tests`
+(backend) and `npm test` in `frontend/` (scoring, validation metrics, trends).
 
 ---
 
@@ -164,6 +188,8 @@ src/evaluation/scoring.py relevance score
 src/filters/flags.py      quality flags
 src/clustering.py         K-Means + elbow + labels + 2-D t-SNE map
 src/keywords.py           per-paper keyphrases (KeyBERT, local) and distinctive cluster labels
-backend/                  FastAPI (SSE streaming for long runs)
+backend/                  FastAPI (SSE streaming for long runs; closing the stream cancels the run)
 frontend/                 React + Vite
+frontend/src/scoring.js   live rescoring (mirrors src/evaluation/scoring.py)
+frontend/src/validation.js  AUC, recall/precision, Wilson intervals for the Validate tab
 ```

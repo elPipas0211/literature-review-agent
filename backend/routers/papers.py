@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from backend.common import require_project, sse_job
 from backend.config import get_config
-from src.pipeline import annotate, prisma_summary, run_snowball
+from src.pipeline import annotate, draw_validation_sample, prisma_summary, run_snowball
 from src.utils.bibtex_exporter import export_bibtex, library_bibtex
 from src.utils.exporters import to_csv, to_ris
 
@@ -61,6 +61,7 @@ class AnnotateRequest(BaseModel):
     id: str
     starred: bool | None = None
     note: str | None = None
+    validation: Literal["relevant", "irrelevant", "unsure", ""] | None = None  # "" clears
 
 
 @router.post("/{project}/annotate")
@@ -68,7 +69,7 @@ def annotate_paper(project: str, req: AnnotateRequest):
     """Star a paper and/or save a note (reading list)."""
     require_project(project)
     try:
-        return annotate(project, req.id, get_config(), req.starred, req.note)
+        return annotate(project, req.id, get_config(), req.starred, req.note, req.validation)
     except ValueError as exc:
         raise HTTPException(404, str(exc))
 
@@ -85,3 +86,14 @@ async def snowball(project: str, req: SnowballRequest):
     require_project(project)
     return sse_job(lambda emit: run_snowball(project, req.id, req.direction, req.max_results,
                                              get_config(), emit))
+
+
+class SampleRequest(BaseModel):
+    size: int = Field(50, ge=1, le=500)
+
+
+@router.post("/{project}/validation/sample")
+def validation_sample(project: str, req: SampleRequest):
+    """Grow the random sample used to check how well the score ranks papers."""
+    require_project(project)
+    return draw_validation_sample(project, req.size, get_config())

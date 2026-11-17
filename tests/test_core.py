@@ -191,3 +191,80 @@ def test_openalex_rate_limit_gives_clear_error(monkeypatch):
     with pytest.raises(oa.OpenAlexError):
         keyed.search_all("x", 10)
     assert seen["api_key"] == "k"
+
+
+def test_cancelled_run_leaves_no_trace(tmp_path):
+    import copy
+    import pytest
+    from backend.config import get_config
+    from src.pipeline import JobCancelled, run_import
+    from src.storage.project_manager import ProjectManager
+
+    cfg = copy.deepcopy(get_config())
+    cfg["storage"]["projects_dir"] = str(tmp_path / "projects")
+    f = tmp_path / "scopus.csv"
+    f.write_text("Authors,Title,Year,Source title,Cited by,DOI,Abstract,Document Type,EID\n"
+                 "Smith J.,Deep stuff,2022,Journal X,5,10.1/abc,An abstract,Article,2-s2.0-1\n", encoding="utf-8")
+
+    def emit(event):
+        if event["type"] == "dedup":
+            raise JobCancelled()
+
+    with pytest.raises(JobCancelled):
+        run_import("p", str(f), "context", cfg, emit)
+    pm = ProjectManager(cfg["storage"]["projects_dir"])
+    assert pm.get_papers("p") == []
+    assert list(pm.sessions_dir("p").iterdir()) == []
+
+
+def test_validation_sample_grows_without_repeats_and_labels(tmp_path):
+    import copy
+    import pytest
+    from backend.config import get_config
+    from src.pipeline import annotate, draw_validation_sample
+    from src.storage.project_manager import ProjectManager
+
+    cfg = copy.deepcopy(get_config())
+    cfg["storage"]["projects_dir"] = str(tmp_path)
+    pm = ProjectManager(str(tmp_path))
+    pm.init_project("p")
+    pm.save_papers("p", [rec(title=f"Paper {i}", externalIds={"DOI": f"10.1/{i}"}) for i in range(30)])
+    first = draw_validation_sample("p", 10, cfg, seed=1)
+    second = draw_validation_sample("p", 25, cfg, seed=2)
+    assert first["added"] == 10 and second["added"] == 20          # only 20 left to draw
+    assert len(set(second["sample"])) == 30
+    pid = second["sample"][0]
+    assert annotate("p", pid, cfg, validation="relevant")["validation"] == "relevant"
+    assert annotate("p", pid, cfg, validation="")["validation"] is None
+    with pytest.raises(ValueError):
+        annotate("p", pid, cfg, validation="maybe")
+
+
+def test_openalex_pages_without_cursor(monkeypatch):
+    from src.sources import openalex as oa
+
+    calls = []
+
+    class Resp:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, params):
+            self.params = params
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            page, per = self.params["page"], self.params["per_page"]
+            n = max(0, min(per, 450 - (page - 1) * per))  # 450 results in total
+            return {"meta": {"count": 450},
+                    "results": [{"id": f"https://openalex.org/W{page}{i}", "title": "t"} for i in range(n)]}
+
+    client = oa.OpenAlexClient()
+    monkeypatch.setattr(client._session, "get", lambda url, params, timeout: calls.append(params) or Resp(params))
+    monkeypatch.setattr(oa.time, "sleep", lambda s: None)
+    assert len(client.search_all("x", 1000)) == 450
+    assert [c["page"] for c in calls] == [1, 2, 3] and all("cursor" not in c for c in calls)
+    calls.clear()
+    assert len(client.search_all("x", 150)) == 150 and len(calls) == 1

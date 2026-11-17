@@ -19,3 +19,10 @@ export function savePref(key, value) {
     /* storage unavailable: preferences just won't persist */
   }
 }
+
+/** 'system' | 'light' | 'dark' — applied as <html data-theme> (absent = follow the OS). */
+export function applyTheme(theme = loadPref('theme', 'system')) {
+  const root = document.documentElement
+  if (theme === 'light' || theme === 'dark') root.dataset.theme = theme
+  else delete root.dataset.theme
+}

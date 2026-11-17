@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { downloadExport, streamClusters } from '../api/client.js'
+import { downloadExport, streamClusters, streamRefreshKeywords } from '../api/client.js'
 
 const SOURCE = { semantic_scholar: 'Semantic Scholar (legacy)', openalex: 'OpenAlex', scopus_csv: 'Scopus (CSV)',
                  wos_csv: 'Web of Science (CSV)', zotero_csv: 'Zotero (CSV)' }
@@ -108,7 +108,25 @@ function ClusterFilter({ clusters, activeCluster, onSelect, project, onGenerated
   const [generating, setGenerating] = useState(false)
   const [onlyRelevant, setOnlyRelevant] = useState(true)
   const [log, setLog] = useState([])
+  const [kwState, setKwState] = useState(null)   // null | 'running' | message
   const list = clusters?.clusters || []
+
+  const handleKeywords = async () => {
+    setKwState('Starting…')
+    try {
+      for await (const ev of streamRefreshKeywords(project)) {
+        if (ev.type === 'keywords_progress') setKwState(`Keywords ${ev.done} / ${ev.total}…`)
+        if (ev.type === 'error') setKwState(`Error: ${ev.message}`)
+        if (ev.type === 'result') {
+          setKwState(`Updated ${ev.result.updated} papers.${list.length ? ' Regenerate clusters to refresh their labels.' : ''}`)
+          onGenerated()
+        }
+      }
+    } catch (err) {
+      setKwState(`Error: ${err.message}`)
+    }
+  }
+  const kwRunning = kwState != null && /…$/.test(kwState)
 
   const handleGenerate = async () => {
     setGenerating(true)
@@ -156,6 +174,11 @@ function ClusterFilter({ clusters, activeCluster, onSelect, project, onGenerated
         {generating ? 'Generating…' : list.length > 0 ? 'Regenerate' : 'Generate clusters'}
       </button>
       {log.length > 0 && <div className="hint">{log.map((l, i) => <div key={i}>{l}</div>)}</div>}
+      <button className="btn-text" onClick={handleKeywords} disabled={kwRunning || generating || !project}
+        title="Re-extract the keyphrases of every paper (about 6 s per 100 papers)">
+        Recompute keywords
+      </button>
+      {kwState && <p className="hint">{kwState}</p>}
     </section>
   )
 }

@@ -162,3 +162,19 @@ Restricciones: interfaz en inglés, nada de pago (sin IA de pago); en lugar de r
 | **Sin pantallas en blanco**: cada zona (búsqueda, pestaña, barra lateral, detalle) tiene un *error boundary* con *Try again* | `ErrorBoundary.jsx` |
 
 **Cómo leer *Trends* para elegir tema:** el gráfico global mide cuánto se publica en todo OpenAlex (coincidencias en título y resumen); casi todo crece, así que compara temas entre sí, no contra cero. Lo de "tu biblioteca" depende de lo que buscaste. Las palabras clave emergentes son frases mucho más frecuentes en los últimos 3 años de tu biblioteca: son pistas, no conclusiones. Las secciones de *future work* de los surveys recientes son la mejor fuente de huecos de investigación.
+
+
+## 10. Ronda 3 (2026-11-17): pruebas, validación y detalles
+
+| Cambio | Detalle |
+|---|---|
+| **OpenAlex sin key: paginación** | OpenAlex empezó a exigir API key para paginar con `cursor`: sin key, toda búsqueda se cortaba en 200 resultados con un error. Ahora se pagina por número de página, que funciona sin key (probado: 450 resultados). El error 401/403 ya no dice "key rechazada" cuando no hay key. |
+| **API key opcional** | Settings guarda `OPENALEX_API_KEY` / `OPENALEX_EMAIL` en `.env` (ignorado por git). Reintentos respetan `Retry-After`; errores legibles. |
+| **`start.bat` / `stop.bat`** | `stop.bat` no detenía nada: el patrón de `findstr` usaba `\|`, que `findstr` no soporta, y no veía Vite en IPv6 (`[::1]:5173`). Reescrito. `start.bat` llamaba a `stop.bat`/`install.bat` sin ruta; ahora con ruta completa. Vite usa `strictPort` para no saltar a 5174 mientras el navegador abre 5173. |
+| **Cancelar** | Botón *Cancel* en el log. Al cerrar el stream el backend detiene la ejecución en el siguiente evento; `papers.json` y `session.json` solo se escriben al final, y la carpeta de sesión a medias se borra, así PRISMA nunca cuenta media búsqueda. |
+| **Validar el ranking (pestaña Validate)** | Muestra aleatoria simple, etiquetado ciego al score (R/N/U, Z deshace), AUC, recall/precisión por umbral con intervalo de Wilson, umbral que conserva ≥95 % de relevantes y párrafo para métodos. Esto convierte los umbrales heurísticos (§6) en umbrales justificados. |
+| **Recalcular palabras clave** | Botón en la barra lateral; corre fuera del bloqueo del proyecto para no frenar estrellas/notas. |
+| **Modo oscuro** | Tokens claros/oscuros; sigue al sistema o se elige en Settings. La paleta de gráficos usa los pasos oscuros validados (contraste ≥ 3:1 sobre el fondo oscuro). |
+| **Botones `btn-ghost`** | Tenían texto crema pensado para el encabezado oscuro y casi no se veían en el resto de la app. Separado en variante de página y de encabezado. |
+| **Tests** | Backend: 18 (`pytest`). Frontend: 8 (`npm test`, Vitest): rescoring, métricas de validación, palabras clave emergentes, preferencias. |
+| **Inicio** | Pantalla de bienvenida con creación de proyecto y tarjetas, checklist en proyectos vacíos, encabezado compacto, pregunta de investigación plegable; títulos en Newsreader. |

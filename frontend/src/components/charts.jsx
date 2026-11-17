@@ -2,8 +2,9 @@ import { useState } from 'react'
 
 // Categorical slots in fixed order (validated palette, light surface). Never cycled:
 // clusters beyond 8 are folded into "Other" by the caller.
-export const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
-export const OTHER = '#9c9284'
+// Values live in index.css (--series-N) so light and dark mode each get their validated step.
+export const SERIES = Array.from({ length: 8 }, (_, i) => `var(--series-${i + 1})`)
+export const OTHER = 'var(--series-other)'
 
 /**
  * Vertical bar chart of counts per year (single series → no legend).

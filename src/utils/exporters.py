@@ -13,7 +13,7 @@ _RIS_TYPES = {"article": "JOUR", "conference": "CONF", "chapter": "CHAP", "book"
 
 CSV_COLUMNS = ["id", "title", "abstract", "authors", "year", "venue", "doi", "url",
                "publication_type", "citations", "similarity", "semantic_score", "score",
-               "category", "is_review", "starred", "note", "keywords", "flags", "sources", "queries"]
+               "category", "is_review", "starred", "validation", "note", "keywords", "flags", "sources", "queries"]
 
 
 def _row(p: dict) -> dict:
@@ -36,6 +36,7 @@ def _row(p: dict) -> dict:
         "category": ev.get("category", "unevaluated"),
         "is_review": "yes" if p.get("is_review") else "",
         "starred": "yes" if p.get("starred") else "",
+        "validation": p.get("validation") or "",
         "note": p.get("note") or "",
         "keywords": "; ".join(p.get("keywords") or []),
         "flags": "; ".join(p.get("flags") or []),

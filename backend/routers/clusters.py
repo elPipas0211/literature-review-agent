@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from backend.common import require_project, sse_job
 from backend.config import get_config
 from src.clustering import run_clustering
+from src.pipeline import refresh_keywords
 
 router = APIRouter(prefix="/api/projects", tags=["clusters"])
 
@@ -32,3 +33,10 @@ async def generate_clusters(project: str, req: ClusterRequest):
     return sse_job(lambda emit: {"num_clusters": run_clustering(
         project, get_config(), emit, req.k_min, req.k_max, req.top_kw, req.only_categories,
     )["num_clusters"]})
+
+
+@router.post("/{project}/keywords/refresh")
+async def recompute_keywords(project: str):
+    """Re-extract every paper's keyphrases (streams progress)."""
+    require_project(project)
+    return sse_job(lambda emit: refresh_keywords(project, get_config(), emit))

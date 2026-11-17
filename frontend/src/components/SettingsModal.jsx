@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { saveOpenAlexSettings } from '../api/client.js'
+import { applyTheme, loadPref, savePref } from '../prefs.js'
 
 const KEY_URL = 'https://openalex.org/rest-api'
 
@@ -9,6 +10,8 @@ export default function SettingsModal({ status, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
   const [error, setError] = useState(null)
+  const [theme, setTheme] = useState(() => loadPref('theme', 'system'))
+  const chooseTheme = (t) => { setTheme(t); savePref('theme', t); applyTheme(t) }
 
   const save = async (fields, done) => {
     setSaving(true); setError(null); setMessage(null)
@@ -67,6 +70,16 @@ export default function SettingsModal({ status, onClose, onSaved }) {
               value={email} onChange={(e) => setEmail(e.target.value)} />
             <button className="btn btn-outline btn-sm" disabled={saving || !emailChanged}>Save email</button>
           </form>
+        </section>
+
+        <section className="settings-section">
+          <div className="detail-section-label">Appearance</div>
+          <div className="segmented" role="radiogroup" aria-label="Theme">
+            {[['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']].map(([value, text]) => (
+              <button key={value} type="button" role="radio" aria-checked={theme === value}
+                className={theme === value ? 'active' : ''} onClick={() => chooseTheme(value)}>{text}</button>
+            ))}
+          </div>
         </section>
 
         {message && <p className="hint settings-ok">{message}</p>}

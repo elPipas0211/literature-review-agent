@@ -14,6 +14,7 @@ projects/<project>/
 """
 import json
 import re
+import shutil
 import threading
 import uuid
 from collections import defaultdict
@@ -21,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 _locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
+_created = threading.local()  # session dirs created by the running job (see discard_unfinished)
 _locks_guard = threading.Lock()
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -124,6 +126,7 @@ class ProjectManager:
         session_id = f"{datetime.now():%Y%m%d_%H%M%S}_{kind}_{uuid.uuid4().hex[:4]}"
         path = self.sessions_dir(project) / session_id
         (path / "results").mkdir(parents=True, exist_ok=True)
+        getattr(_created, "paths", []).append(path)
         return session_id, path
 
     def save_raw_results(self, session_path: Path, source: str, records: list[dict]) -> None:
@@ -142,3 +145,23 @@ class ProjectManager:
             if f.exists():
                 out.append(json.loads(f.read_text(encoding="utf-8")))
         return out
+
+
+def track_sessions() -> None:
+    """Start recording the session folders this thread creates."""
+    _created.paths = []
+
+
+def discard_unfinished() -> int:
+    """
+    Remove session folders created since track_sessions() that never got a
+    session.json (the run failed or was cancelled before finishing), so PRISMA
+    never counts half a run. Returns how many were removed.
+    """
+    removed = 0
+    for path in getattr(_created, "paths", []):
+        if not (path / "session.json").exists():
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    _created.paths = []
+    return removed

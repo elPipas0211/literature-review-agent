@@ -94,6 +94,12 @@ export function streamImport(project, file, context, signal) {
 export const streamClusters = (project, params, signal) =>
   sse(`/projects/${enc(project)}/clusters`, { ...json('POST', params), signal })
 
+export const streamRefreshKeywords = (project, signal) =>
+  sse(`/projects/${enc(project)}/keywords/refresh`, { ...json('POST', {}), signal })
+
+export const drawValidationSample = (project, size) =>
+  req(`/projects/${enc(project)}/validation/sample`, json('POST', { size }))
+
 export const annotatePaper = (project, id, fields) =>
   req(`/projects/${enc(project)}/annotate`, json('POST', { id, ...fields }))
 

@@ -65,12 +65,14 @@ def _normalize(work: dict) -> dict:
 
 class OpenAlexClient:
     def __init__(self, email: Optional[str] = None, rate_limit_delay: float = 0.15,
-                 on_wait: Callable[[str], None] | None = None, api_key: Optional[str] = None):
+                 on_wait: Callable[[str], None] | None = None, api_key: Optional[str] = None,
+                 on_progress: Callable[[int], None] | None = None):
         self._session = requests.Session()
         self._email = email
         self._api_key = api_key
         self._delay = rate_limit_delay
         self._on_wait = on_wait or (lambda msg: None)
+        self._on_progress = on_progress or (lambda n: None)
 
     def _get(self, url: str, params: dict) -> dict:
         params = dict(params)
@@ -92,7 +94,10 @@ class OpenAlexClient:
                 continue
             if resp.status_code not in _RETRY_STATUS:
                 if resp.status_code in (401, 403):
-                    raise OpenAlexError("OpenAlex rejected the API key. Check it in Settings (or .env).")
+                    if self._api_key:
+                        raise OpenAlexError("OpenAlex rejected the API key. Check it in Settings (or .env).")
+                    raise OpenAlexError(f"OpenAlex refused the request: {_server_message(resp)} "
+                                        "A free API key (Settings) lifts this limit.")
                 resp.raise_for_status()
                 time.sleep(self._delay)
                 return resp.json()
@@ -109,16 +114,20 @@ class OpenAlexClient:
         raise OpenAlexError(f"OpenAlex is not responding (HTTP {resp.status_code}); try again later.")
 
     def _paginate(self, params: dict, max_results: int) -> list[dict]:
+        # Page numbers, not cursors: OpenAlex only allows cursor paging with an API key,
+        # while page paging works for everyone up to 10,000 results (we stop far earlier).
         papers: list[dict] = []
-        cursor = "*"
-        while len(papers) < max_results and cursor:
-            per_page = min(200, max_results - len(papers))
-            data = self._get(BASE_URL, {**params, "select": _SELECT, "per_page": per_page, "cursor": cursor})
+        per_page = min(200, max(1, max_results))
+        page = 1
+        while len(papers) < max_results:
+            data = self._get(BASE_URL, {**params, "select": _SELECT, "per_page": per_page, "page": page})
             batch = data.get("results") or []
-            if not batch:
-                break
             papers.extend(_normalize(w) for w in batch)
-            cursor = (data.get("meta") or {}).get("next_cursor")
+            self._on_progress(min(len(papers), max_results))
+            total = (data.get("meta") or {}).get("count") or 0
+            if len(batch) < per_page or len(papers) >= total:
+                break
+            page += 1
         return papers[:max_results]
 
     # ── keyword search ──────────────────────────────────────────────────────
@@ -179,3 +188,11 @@ def _retry_after(resp: requests.Response) -> float | None:
         return float(resp.headers.get("Retry-After", ""))
     except ValueError:
         return None
+
+
+def _server_message(resp: requests.Response) -> str:
+    try:
+        data = resp.json()
+        return str(data.get("message") or data.get("error") or f"HTTP {resp.status_code}")
+    except ValueError:
+        return f"HTTP {resp.status_code}"

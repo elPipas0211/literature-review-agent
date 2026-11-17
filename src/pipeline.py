@@ -9,6 +9,7 @@ Design rules (see AUDITORIA.md):
   * The research context lives at project level; when it changes, the whole
     library is rescored so scores stay comparable.
 """
+import functools
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +22,7 @@ from src.filters.flags import compute_flags
 from src.importers.csv_import import parse_csv
 from src.keywords import extract_keywords
 from src.sources.openalex import OpenAlexClient
-from src.storage.project_manager import ProjectManager
+from src.storage.project_manager import ProjectManager, discard_unfinished, track_sessions
 from src.utils.bibtex_exporter import export_bibtex
 from src.utils.deduplication import dedupe_batch, merge_records, match_library
 from src.utils.records import finalize_record
@@ -33,12 +34,35 @@ def _noop(_event: dict) -> None:
     pass
 
 
+class JobCancelled(Exception):
+    """Raised by an emit callback when the user cancelled the run."""
+
+
+def _runs_atomically(fn):
+    """
+    A run either finishes (papers + session.json saved) or leaves no trace:
+    if it raises - an error or JobCancelled from emit - its unfinished session
+    folder is deleted. papers.json is only written right before session.json,
+    and nothing after that point can be cancelled.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        track_sessions()
+        try:
+            return fn(*args, **kwargs)
+        except BaseException:
+            discard_unfinished()
+            raise
+    return wrapper
+
+
 def _openalex(config: dict, emit: Emit) -> OpenAlexClient:
     oa = (config.get("sources") or {}).get("openalex") or {}
     return OpenAlexClient(
         email=oa.get("email") or None,
         api_key=oa.get("api_key") or None,
         on_wait=lambda msg: emit({"type": "wait", "source": "openalex", "message": msg}),
+        on_progress=lambda n: emit({"type": "fetch_progress", "source": "openalex", "retrieved": n}),
     )
 
 
@@ -121,7 +145,9 @@ def _ingest(pm: ProjectManager, project: str, records_by_source: dict[str, list[
                        for p in library if p["id"] in new_ids)
         if effective:
             emit({"type": "eval_done", **cats})
+        emit({"type": "stage", "message": "Saving…"})  # last point where a cancel is honored
 
+        # ── commit point: no emit (so no cancellation) until session.json is written ──
         pm.save_papers(project, library)
         export_bibtex(library, pm.bibtex_path(project))
 
@@ -145,6 +171,7 @@ def _ingest(pm: ProjectManager, project: str, records_by_source: dict[str, list[
 
 # ── Search ───────────────────────────────────────────────────────────────────
 
+@_runs_atomically
 def run_search(project: str, query: str, context: str | None, max_results: int, config: dict,
                emit: Emit = _noop, year_from: int | None = None, year_to: int | None = None) -> dict:
     pm = ProjectManager(config["storage"]["projects_dir"])
@@ -169,6 +196,7 @@ def run_search(project: str, query: str, context: str | None, max_results: int, 
 
 # ── CSV import ───────────────────────────────────────────────────────────────
 
+@_runs_atomically
 def run_import(project: str, csv_path: str, context: str | None, config: dict,
                emit: Emit = _noop, filename: str | None = None) -> dict:
     pm = ProjectManager(config["storage"]["projects_dir"])
@@ -199,6 +227,29 @@ def rescore_library(project: str, context: str, config: dict) -> dict:
         export_bibtex(library, pm.bibtex_path(project))
     cats = Counter((p.get("evaluation") or {}).get("category", "unevaluated") for p in library)
     return {"total": len(library), "by_category": dict(cats)}
+
+
+def refresh_keywords(project: str, config: dict, emit: Emit = _noop) -> dict:
+    """
+    Re-extract the keyphrases of every paper (e.g. after the keyword filter improved).
+    The slow part runs on a copy, outside the project lock, so starring papers
+    meanwhile still works; only the keywords are written back.
+    """
+    pm = ProjectManager(config["storage"]["projects_dir"])
+    work = [{"id": p["id"], "title": p.get("title"), "abstract": p.get("abstract"), "keywords": None}
+            for p in pm.get_papers(project)]
+    emit({"type": "keywords", "count": len(work)})
+    extract_keywords(work, get_embedder(config), (config.get("keywords") or {}).get("per_paper", 5),
+                     on_progress=lambda done, total: emit({"type": "keywords_progress", "done": done, "total": total}))
+    fresh = {w["id"]: w["keywords"] for w in work if w["keywords"] is not None}
+    emit({"type": "stage", "message": "Saving…"})
+    with pm.lock(project):
+        library = pm.get_papers(project)
+        for p in library:
+            if p["id"] in fresh:
+                p["keywords"] = fresh[p["id"]]
+        pm.save_papers(project, library)
+    return {"updated": len(fresh)}
 
 
 def semantic_query(project: str, question: str, top: int, config: dict) -> list[dict]:
@@ -262,6 +313,7 @@ def prisma_summary(project: str, config: dict) -> dict:
 
 # ── Snowballing (citation searching) ─────────────────────────────────────────
 
+@_runs_atomically
 def run_snowball(project: str, paper_id: str, direction: str, max_results: int, config: dict,
                  emit: Emit = _noop) -> dict:
     """Add the references of a paper (backward), the papers citing it (forward), or both."""
@@ -314,8 +366,11 @@ def run_snowball(project: str, paper_id: str, direction: str, max_results: int, 
 
 # ── Reading list ─────────────────────────────────────────────────────────────
 
+VALIDATION_LABELS = {"relevant", "irrelevant", "unsure"}
+
+
 def annotate(project: str, paper_id: str, config: dict, starred: bool | None = None,
-             note: str | None = None) -> dict:
+             note: str | None = None, validation: str | None = None) -> dict:
     pm = ProjectManager(config["storage"]["projects_dir"])
     with pm.lock(project):
         library = pm.get_papers(project)
@@ -325,9 +380,43 @@ def annotate(project: str, paper_id: str, config: dict, starred: bool | None = N
                     p["starred"] = bool(starred)
                 if note is not None:
                     p["note"] = note.strip()
+                if validation is not None:  # "" clears the label
+                    if validation and validation not in VALIDATION_LABELS:
+                        raise ValueError(f"Unknown label '{validation}'")
+                    if validation:
+                        p["validation"] = validation
+                    else:
+                        p.pop("validation", None)
                 pm.save_papers(project, library)
-                return {"id": paper_id, "starred": p.get("starred", False), "note": p.get("note", "")}
+                return {"id": paper_id, "starred": p.get("starred", False), "note": p.get("note", ""),
+                        "validation": p.get("validation")}
     raise ValueError(f"Paper {paper_id} is not in the project")
+
+
+# ── Ranking validation ───────────────────────────────────────────────────────
+
+def draw_validation_sample(project: str, size: int, config: dict, seed: int | None = None) -> dict:
+    """
+    Add `size` papers, drawn by simple random sampling from those not yet in the
+    sample, to the project's validation sample. Simple random sampling keeps the
+    precision / recall estimates unbiased for the whole library.
+    """
+    import random
+
+    pm = ProjectManager(config["storage"]["projects_dir"])
+    with pm.lock(project):
+        meta = pm.get_meta(project)
+        sample = list(meta.get("validation_sample") or [])
+        ids = [p["id"] for p in pm.get_papers(project)]
+        pool = sorted(set(ids) - set(sample))
+        rng = random.Random(seed)
+        added = rng.sample(pool, min(size, len(pool)))
+        sample += added
+        draws = list(meta.get("validation_draws") or [])
+        draws.append({"at": datetime.now().isoformat(timespec="seconds"), "added": len(added),
+                      "library_size": len(ids)})
+        pm.set_meta(project, validation_sample=sample, validation_draws=draws)
+    return {"sample": sample, "added": len(added), "draws": draws}
 
 
 # ── Global trends ────────────────────────────────────────────────────────────

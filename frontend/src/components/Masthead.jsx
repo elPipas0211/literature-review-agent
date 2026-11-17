@@ -99,7 +99,7 @@ function ProjectSelector({ projects, currentProject, onProjectChange, onProjects
                   <span className="delete-confirm-label">Delete <strong>{p}</strong>?</span>
                   <button
                     className="btn btn-sm"
-                    style={{ background: 'var(--error)', color: '#fff', border: 'none' }}
+                    style={{ background: 'var(--error)', color: 'var(--cream-light)', border: 'none' }}
                     onClick={() => handleDelete(p)}
                   >Delete</button>
                   <button className="btn btn-sm btn-outline"
