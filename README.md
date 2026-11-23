@@ -2,10 +2,10 @@
 
 A local tool for the **identification** phase of a literature review. It does four things:
 
-1. **Collects** records from OpenAlex (free, no key), Scopus / Web of Science / Zotero CSV exports, and citation snowballing.
+1. **Collects** records from OpenAlex (free), Scopus / Web of Science / Zotero exports (CSV, tab-delimited or BibTeX), and citation snowballing.
 2. **Merges duplicates** and keeps a PRISMA-ready log of every search.
 3. **Ranks** every paper by semantic similarity to your research question, using a multilingual model: write the question in Spanish, match English papers.
-4. **Exports** the library to CSV / RIS / BibTeX.
+4. **Exports** the library to CSV / RIS / BibTeX, and writes **APA 7** references (copy one, or a Word-ready list).
 
 Screening (deciding what to include) is meant to happen in a dedicated tool such as
 [ASReview](https://asreview.nl) or [Rayyan](https://www.rayyan.ai); references go to Zotero.
@@ -85,6 +85,24 @@ The same dialog takes an optional contact email (`OPENALEX_EMAIL`).
   searches and go into the CSV/RIS exports.
 - **History.** In the sidebar, *↻ reuse* puts an old query back in the search box.
 - The app remembers each project's tab, filters, sort and scoring sliders in your browser.
+
+### Importing exports
+
+**Import file** (top right) accepts Scopus CSV or BibTeX, Web of Science BibTeX (`.bib` or the
+`savedrecs.txt` it downloads) or tab-delimited files, Zotero CSV or BibTeX, and any other BibTeX
+file. Choose *Full Record* in Web of Science so abstracts and citation counts come along. BibTeX
+LaTeX (accents, `\&`, `{[}`) is converted to plain text, and Web of Science's all-capital
+journal names are written in title case.
+
+### APA 7 citations
+
+Open a paper: **Cite — APA 7** shows its reference with **Copy reference** (keeps the italics
+when pasted into Word or Google Docs) and **Copy in-text** — e.g. `(Smith et al., 2021)`. The
+**APA** export button downloads a reference list as `.rtf` (alphabetical, hanging indent,
+italics), for the whole library, the current view or the reading list. Titles are put in
+sentence case automatically (acronyms such as LSTM or NSL-KDD are kept): check the capitals of
+proper nouns. If volume / pages are missing, **Complete from OpenAlex** (under Export) fills them
+by DOI without changing scores or PRISMA counts.
 
 ### Long runs
 
@@ -181,8 +199,8 @@ projects/<project>/
 ```
 src/pipeline.py           search / import / rescore / query / PRISMA (used by API and CLI)
 src/sources/openalex.py   OpenAlex search, snowballing, yearly trends (with retry/backoff)
-src/importers/            Scopus / WoS / Zotero CSV parser
-src/utils/                records & DOI normalization, deduplication, BibTeX, CSV/RIS
+src/importers/            Scopus / WoS / Zotero CSV and BibTeX parsers
+src/utils/                records & DOI normalization, deduplication, BibTeX, CSV/RIS, APA 7 (apa.py)
 src/embeddings/           shared model + per-project embedding cache
 src/evaluation/scoring.py relevance score
 src/filters/flags.py      quality flags

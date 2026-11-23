@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { downloadExport, streamClusters, streamRefreshKeywords } from '../api/client.js'
+import { downloadExport, streamClusters, streamCompleteDetails, streamRefreshKeywords } from '../api/client.js'
 
-const SOURCE = { semantic_scholar: 'Semantic Scholar (legacy)', openalex: 'OpenAlex', scopus_csv: 'Scopus (CSV)',
-                 wos_csv: 'Web of Science (CSV)', zotero_csv: 'Zotero (CSV)' }
+import { SOURCE_LABELS as SOURCE } from '../sources.js'
 
 function StatCards({ papers, onShowStarred, onShowReviews }) {
   const count = (c) => papers.filter((p) => p.evaluation?.category === c).length
@@ -16,9 +15,11 @@ function StatCards({ papers, onShowStarred, onShowReviews }) {
         <div className="stat-card relevant"><span className="stat-card-label">Relevant</span><span className="stat-card-number">{count('relevante')}</span></div>
         <div className="stat-card potential"><span className="stat-card-label">Potential</span><span className="stat-card-number">{count('potencialmente_relevante')}</span></div>
         <div className="stat-card"><span className="stat-card-label">Low</span><span className="stat-card-number">{count('no_relevante')}</span></div>
-        <button className="stat-card clickable" onClick={onShowStarred} disabled={!starred} title="Show the reading list">
+        <button className={`stat-card${starred ? ' clickable' : ''}`} onClick={() => starred && onShowStarred()}
+          title={starred ? 'Show the reading list' : 'Star papers (☆) to build your reading list'}>
           <span className="stat-card-label">★ Reading list</span><span className="stat-card-number">{starred}</span></button>
-        <button className="stat-card clickable" onClick={onShowReviews} disabled={!reviews} title="Show surveys and reviews">
+        <button className={`stat-card${reviews ? ' clickable' : ''}`} onClick={() => reviews && onShowReviews()}
+          title={reviews ? 'Show surveys and reviews' : 'No surveys or reviews detected yet'}>
           <span className="stat-card-label">Surveys</span><span className="stat-card-number">{reviews}</span></button>
       </div>
     </section>
@@ -73,32 +74,66 @@ function Prisma({ prisma, onReuseSearch }) {
   )
 }
 
-function Exports({ project, total, visibleIds }) {
+const FORMATS = [['csv', 'CSV'], ['ris', 'RIS'], ['bib', 'BibTeX'], ['apa', 'APA']]
+
+function Exports({ project, total, visibleIds, starredIds, missingDetails, onReload }) {
   const [error, setError] = useState(null)
+  const [details, setDetails] = useState(null)
+  const completeDetails = async () => {
+    setDetails('Starting…')
+    try {
+      for await (const ev of streamCompleteDetails(project)) {
+        if (ev.type === 'details_progress') setDetails(`Checking ${ev.done} / ${ev.total}…`)
+        if (ev.type === 'wait') setDetails(ev.message)
+        if (ev.type === 'error') setDetails(`Error: ${ev.message}`)
+        if (ev.type === 'result') {
+          setDetails(`Completed ${ev.result.updated} of ${ev.result.checked}. The rest are not in OpenAlex or have no volume/pages there.`)
+          onReload()
+        }
+      }
+    } catch (err) {
+      setDetails(`Error: ${err.message}`)
+    }
+  }
   const run = (fmt, ids) => downloadExport(project, fmt, ids).catch((e) => setError(e.message))
   const partial = visibleIds.length < total
   return (
     <section className="sidebar-section">
       <div className="sidebar-label">Export</div>
       <div className="export-grid">
-        {['csv', 'ris', 'bib'].map((fmt) => (
+        {FORMATS.map(([fmt, label]) => (
           <button key={fmt} className="btn btn-outline btn-sm" disabled={!total}
             onClick={() => run(fmt, null)} title={`Whole library (${total})`}>
-            {fmt.toUpperCase()}
+            {label}
           </button>
         ))}
       </div>
-      {partial && (
-        <div className="export-grid">
-          {['csv', 'ris', 'bib'].map((fmt) => (
-            <button key={fmt} className="btn btn-ghost btn-sm" disabled={!visibleIds.length}
-              onClick={() => run(fmt, visibleIds)}>
-              {fmt.toUpperCase()} · view ({visibleIds.length})
-            </button>
-          ))}
-        </div>
+      {starredIds.length > 0 && (
+        <button className="btn btn-outline btn-sm" onClick={() => run('apa', starredIds)}>
+          APA references · reading list ({starredIds.length})
+        </button>
       )}
-      <p className="hint">CSV/RIS → ASReview, Rayyan, Zotero. BibTeX keys match the “Copy” button.</p>
+      {partial && (
+        <>
+          <div className="sidebar-sublabel">Only the current view ({visibleIds.length})</div>
+          <div className="export-grid">
+            {FORMATS.map(([fmt, label]) => (
+              <button key={fmt} className="btn btn-ghost btn-sm" disabled={!visibleIds.length}
+                onClick={() => run(fmt, visibleIds)}>{label}</button>
+            ))}
+          </div>
+        </>
+      )}
+      <p className="hint">CSV / RIS → ASReview, Rayyan, Zotero. BibTeX keys match the “Copy” button.
+        APA → a Word-ready reference list (.rtf, alphabetical, italics kept).</p>
+      {missingDetails > 0 && (
+        <p className="hint">
+          {missingDetails} papers with a DOI lack volume / pages for their APA reference.{' '}
+          <button className="btn-text" disabled={details != null && /…$/.test(details)} onClick={completeDetails}>
+            Complete from OpenAlex</button>
+        </p>
+      )}
+      {details && <p className="hint">{details}</p>}
       {error && <p className="hint" style={{ color: 'var(--error)' }}>{error}</p>}
     </section>
   )
@@ -230,7 +265,10 @@ export default function Sidebar({
     <>
       <StatCards papers={papers} onShowStarred={onShowStarred} onShowReviews={onShowReviews} />
       <Prisma prisma={prisma} onReuseSearch={onReuseSearch} />
-      {project && <Exports project={project} total={papers.length} visibleIds={visibleIds} />}
+      {project && <Exports project={project} total={papers.length} visibleIds={visibleIds}
+        starredIds={papers.filter((p) => p.starred).map((p) => p.id)}
+        missingDetails={papers.filter((p) => p.externalIds?.DOI && !p.volume && !p.pages).length}
+        onReload={onClustersGenerated} />}
       <div className="divider" />
       <ClusterFilter clusters={clusters} activeCluster={activeCluster} onSelect={onClusterSelect}
         project={project} onGenerated={onClustersGenerated} />

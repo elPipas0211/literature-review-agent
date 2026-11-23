@@ -8,7 +8,7 @@ export default defineConfig({
     strictPort: true,   // start.bat opens :5173, so never silently move to another port
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.LRA_API || 'http://localhost:8000',  // LRA_API: run a second copy side by side
         changeOrigin: true,
       },
     },

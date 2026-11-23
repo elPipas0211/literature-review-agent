@@ -7,8 +7,10 @@ from pydantic import BaseModel, Field
 
 from backend.common import require_project, sse_job
 from backend.config import get_config
-from src.pipeline import annotate, draw_validation_sample, prisma_summary, run_snowball
+from src.pipeline import (annotate, complete_citation_details, draw_validation_sample, prisma_summary,
+                          run_snowball)
 from src.utils.bibtex_exporter import export_bibtex, library_bibtex
+from src.utils.apa import apa_html, apa_in_text, apa_text, reference_list_rtf
 from src.utils.exporters import to_csv, to_ris
 
 router = APIRouter(prefix="/api/projects", tags=["papers"])
@@ -21,6 +23,7 @@ def get_papers(project: str):
     bib = library_bibtex(papers)
     for p in papers:
         p["cite_key"], p["bibtex"] = bib[p["id"]]
+        p["apa"] = {"text": apa_text(p), "html": apa_html(p), "in_text": apa_in_text(p)}
     return papers
 
 
@@ -31,12 +34,12 @@ def get_prisma(project: str):
 
 
 class ExportRequest(BaseModel):
-    format: Literal["csv", "ris", "bib"]
+    format: Literal["csv", "ris", "bib", "apa"]
     ids: list[str] | None = None  # None = whole library
 
 
 _MEDIA = {"csv": "text/csv; charset=utf-8", "ris": "application/x-research-info-systems",
-          "bib": "application/x-bibtex"}
+          "bib": "application/x-bibtex", "apa": "application/rtf"}
 
 
 @router.post("/{project}/export")
@@ -51,8 +54,13 @@ def export(project: str, req: ExportRequest):
         papers = [p for p in library if wanted is None or p["id"] in wanted]
         if req.ids:
             papers.sort(key=lambda p: order.get(p["id"], 0))
-        body = to_csv(papers) if req.format == "csv" else to_ris(papers)
-    filename = f"{project}_{datetime.now():%Y%m%d}.{req.format}"
+        if req.format == "apa":
+            body = reference_list_rtf(papers)  # alphabetical, as APA requires
+        else:
+            body = to_csv(papers) if req.format == "csv" else to_ris(papers)
+    ext = "rtf" if req.format == "apa" else req.format
+    suffix = "_APA_references" if req.format == "apa" else ""
+    filename = f"{project}{suffix}_{datetime.now():%Y%m%d}.{ext}"
     return Response(body, media_type=_MEDIA[req.format],
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
@@ -97,3 +105,10 @@ def validation_sample(project: str, req: SampleRequest):
     """Grow the random sample used to check how well the score ranks papers."""
     require_project(project)
     return draw_validation_sample(project, req.size, get_config())
+
+
+@router.post("/{project}/complete-details")
+async def complete_details(project: str):
+    """Fill missing volume / issue / pages from OpenAlex (streams progress)."""
+    require_project(project)
+    return sse_job(lambda emit: complete_citation_details(project, get_config(), emit))

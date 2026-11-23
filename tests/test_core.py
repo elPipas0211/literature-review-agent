@@ -268,3 +268,82 @@ def test_openalex_pages_without_cursor(monkeypatch):
     assert [c["page"] for c in calls] == [1, 2, 3] and all("cursor" not in c for c in calls)
     calls.clear()
     assert len(client.search_all("x", 150)) == 150 and len(calls) == 1
+
+
+WOS_BIB = r"""
+@article{ WOS:000123456700001,
+Author = {Smith, John and Garc{\'{i}}a, Mar{\'{\i}}a and others},
+Title = {{Deep LSTM} networks for intrusion detection: a review},
+Journal = {{IEEE ACCESS}},
+Year = {{2021}},
+Volume = {{9}},
+Abstract = {{Intrusion detection {[}1] uses na\"{i}ve Bayes \& 50\% of {NSL-KDD}.}},
+Type = {{Review}},
+DOI = {{10.1109/ACCESS.2021.1234}},
+Unique-ID = {{WOS:000123456700001}},
+Times-Cited = {{12}},
+}
+
+@inproceedings{ WOS:000123456700002,
+Author = {Doe, Alice},
+Title = {{Random forests on KDD} 99},
+Booktitle = {{2020 IEEE CONFERENCE ON SECURITY}},
+Year = {{2020}},
+Unique-ID = {{WOS:000123456700002}},
+}
+"""
+
+
+def test_parse_wos_bibtex(tmp_path):
+    from src.importers.bibtex_import import looks_like_bibtex, parse_bibtex
+    f = tmp_path / "savedrecs.txt"   # WoS names BibTeX downloads .txt or .bib
+    f.write_text(WOS_BIB, encoding="utf-8")
+    assert looks_like_bibtex(f)
+    fmt, n, records = parse_bibtex(f)
+    assert fmt == "wos" and n == 2
+    a, b = records
+    assert a["title"] == "Deep LSTM networks for intrusion detection: a review"
+    assert [x["name"] for x in a["authors"]] == ["Smith, John", "García, María"]
+    assert a["abstract"] == "Intrusion detection [1] uses naïve Bayes & 50% of NSL-KDD."
+    assert a["externalIds"] == {"DOI": "10.1109/access.2021.1234"}
+    assert a["year"] == 2021 and a["citationCount"] == 12 and a["is_review"]
+    assert a["venue"] == "IEEE Access" and a["_source"] == "wos_bib"   # WoS capitals undone
+    assert b["venue"] == "2020 IEEE Conference on Security"
+    assert b["publicationType"] == "conference" and b["citationCount"] is None
+
+
+def test_parse_generic_bibtex_macros_and_quotes(tmp_path):
+    from src.importers.bibtex_import import parse_bibtex
+    f = tmp_path / "zotero.bib"
+    f.write_text(r'''@string{tnn = "IEEE Trans. Neural Netw."}
+@comment{ignored}
+@article{key1, title = "A {\v{S}}koda study", journal = tnn # " Learn.",
+  year = 2019, author = "Novak, Jan and Kov{\'a}{\v r}, Petr",
+  note = {Cited by: 7}, url = {https://example.org/\url}}
+''', encoding="utf-8")
+    fmt, n, records = parse_bibtex(f)
+    assert fmt == "bibtex" and n == 1
+    r = records[0]
+    assert r["title"] == "A Škoda study"
+    assert r["venue"] == "IEEE Trans. Neural Netw. Learn."
+    assert r["year"] == 2019 and r["_source"] == "bibtex"
+    assert [x["name"] for x in r["authors"]] == ["Novak, Jan", "Kovář, Petr"]
+
+
+def test_apa_reference_and_in_text():
+    from src.utils.apa import apa_html, apa_in_text, apa_text, reference_list_rtf
+    art = rec(title="Deep LSTM Networks for Intrusion Detection: A Short-Term Study", year=2021,
+              authors=[{"name": "Smith, John Michael"}, {"name": "García-López A.B."}, {"name": "Jean-Paul Sartre"}],
+              venue="IEEE Access", externalIds={"DOI": "10.1/x"}, publicationType="article")
+    art.update(volume="9", issue="3", pages="100-110")
+    assert apa_text(art) == ("Smith, J. M., García-López, A. B., & Sartre, J.-P. (2021). Deep LSTM networks for "
+                             "intrusion detection: A short-term study. IEEE Access, 9(3), 100–110. https://doi.org/10.1/x")
+    assert "<i>IEEE Access</i>, <i>9</i>(3)" in apa_html(art)
+    assert apa_in_text(art) == "(Smith et al., 2021)"
+    conf = rec(title="Random Forests on KDD 99", year=None, authors=[{"name": "Doe, Alice"}, {"name": "Roe, Bob"}],
+               venue="Proc. ICCCS", publicationType="conference", externalIds={})
+    assert apa_text(conf) == "Doe, A., & Roe, B. (n.d.). Random forests on KDD 99. In Proc. ICCCS."
+    assert apa_in_text(conf) == "(Doe & Roe, n.d.)"
+    rtf = reference_list_rtf([conf, art])
+    assert rtf.startswith(r"{\rtf1") and rtf.index("Doe") < rtf.index("Smith")   # alphabetical
+    assert r"Garc\u237?a" in rtf and r"{\i IEEE Access}" in rtf

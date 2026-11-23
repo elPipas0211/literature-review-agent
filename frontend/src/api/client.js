@@ -100,6 +100,9 @@ export const streamRefreshKeywords = (project, signal) =>
 export const drawValidationSample = (project, size) =>
   req(`/projects/${enc(project)}/validation/sample`, json('POST', { size }))
 
+export const streamCompleteDetails = (project, signal) =>
+  sse(`/projects/${enc(project)}/complete-details`, { ...json('POST', {}), signal })
+
 export const annotatePaper = (project, id, fields) =>
   req(`/projects/${enc(project)}/annotate`, json('POST', { id, ...fields }))
 

@@ -5,8 +5,7 @@ const TYPE_LABELS = {
   article: 'Journal article', conference: 'Conference paper', chapter: 'Book chapter',
   book: 'Book', preprint: 'Preprint', thesis: 'Thesis', other: 'Other',
 }
-const SOURCE = { semantic_scholar: 'Semantic Scholar (legacy)', openalex: 'OpenAlex', citation_search: 'Citation searching', scopus_csv: 'Scopus CSV',
-                 wos_csv: 'Web of Science CSV', zotero_csv: 'Zotero CSV' }
+import { SOURCE_LABELS as SOURCE } from '../sources.js'
 
 export default function PaperDetail({ paper, onClose, onSnowball, busy, onAnnotate, onKeyword }) {
   const [copied, setCopied] = useState(false)
@@ -28,11 +27,23 @@ export default function PaperDetail({ paper, onClose, onSnowball, busy, onAnnota
   const authors = (paper.authors || []).map((a) => a.name).join('; ')
   const queries = [...new Set((paper.found_in || []).map((f) => f.query).filter(Boolean))]
 
-  const copy = async () => {
-    await navigator.clipboard.writeText(paper.bibtex || '')
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  // `copied` names what was just copied ('bib' | 'apa' | 'intext') so only that button says Copied!
+  const flash = (what) => { setCopied(what); setTimeout(() => setCopied(false), 2000) }
+  const copy = async () => { await navigator.clipboard.writeText(paper.bibtex || ''); flash('bib') }
+  // Rich copy keeps the italics when pasted into Word / Google Docs; plain text as fallback.
+  const copyApa = async () => {
+    const { text, html } = paper.apa || {}
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+      })])
+    } catch {
+      await navigator.clipboard.writeText(text || '')
+    }
+    flash('apa')
   }
+  const copyInText = async () => { await navigator.clipboard.writeText(paper.apa?.in_text || ''); flash('intext') }
 
   return (
     <div className="detail-overlay" onClick={(e) => e.target === e.currentTarget && close()}>
@@ -107,10 +118,27 @@ export default function PaperDetail({ paper, onClose, onSnowball, busy, onAnnota
           {queries.length > 0 && <p className="detail-meta">Found by: {queries.map((q) => `“${q}”`).join(', ')}</p>}
         </div>
 
+        {paper.apa && (
+          <div>
+            <div className="detail-section-label section-row">
+              <span>Cite — APA 7</span>
+              <span className="section-actions">
+                <button className="btn btn-outline btn-sm" onClick={copyInText}>
+                  {copied === 'intext' ? 'Copied!' : `Copy in-text ${paper.apa.in_text}`}</button>
+                <button className="btn btn-outline btn-sm" onClick={copyApa}>{copied === 'apa' ? 'Copied!' : 'Copy reference'}</button>
+              </span>
+            </div>
+            {/* html comes from the backend with every text run escaped; only <i> tags are added */}
+            <p className="apa-reference" dangerouslySetInnerHTML={{ __html: paper.apa.html }} />
+            <p className="hint">Titles are put in sentence case automatically; check the capitals of proper nouns.
+              {!paper.volume && !paper.pages && ' Volume and pages are missing from the source, so they are left out.'}</p>
+          </div>
+        )}
+
         <div>
-          <div className="detail-section-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="detail-section-label section-row">
             <span>BibTeX <code>{paper.cite_key}</code></span>
-            <button className="btn btn-outline btn-sm copy-btn" onClick={copy}>{copied ? 'Copied!' : 'Copy'}</button>
+            <button className="btn btn-outline btn-sm copy-btn" onClick={copy}>{copied === 'bib' ? 'Copied!' : 'Copy'}</button>
           </div>
           <pre className="bibtex-block">{paper.bibtex}</pre>
         </div>

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 
 const SOURCE = { openalex: 'OpenAlex', references: 'References', citations: 'Citing papers' }
 const src = (s) => SOURCE[s] || s
+const FORMAT = { scopus: 'Scopus', wos: 'Web of Science', zotero: 'Zotero', bibtex: 'BibTeX' }
 
 export function describe(event) {
   switch (event.type) {
@@ -11,7 +12,7 @@ export function describe(event) {
     case 'cancelled':   return ['log-line warn', '✗ Cancelled. Nothing from this run was added, unless it had already reached “Saving…”.']
     case 'fetch_done':  return ['log-line fetch', `  ${src(event.source)}: ${event.retrieved} records`]
     case 'wait':        return ['log-line warn', `  ${event.message}`]
-    case 'parse':       return ['log-line', `  Parsed ${event.rows} rows (${event.format?.toUpperCase()}), ${event.records} records with title`]
+    case 'parse':       return ['log-line', `  Read ${event.rows} ${event.file_type === 'bibtex' ? 'BibTeX entries' : 'rows'} (${FORMAT[event.format] || event.format}), ${event.records} records with a title`]
     case 'dedup':       return ['log-line', `  ${event.identified} identified → ${event.within} duplicates merged, ${event.already} already in library → ${event.new} new`]
     case 'context':     return ['log-line warn', `  Research context updated — rescoring all ${event.rescoring} papers`]
     case 'embed':       return ['log-line', `  Embedding ${event.count} new papers…`]

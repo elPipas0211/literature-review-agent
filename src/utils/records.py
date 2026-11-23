@@ -64,6 +64,42 @@ def paper_text(paper: dict) -> str:
     return f"{title}. {abstract}".strip(" .") if abstract else title
 
 
+_MINOR = {"a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on",
+          "or", "over", "the", "to", "via", "with", "de", "del", "la", "le", "et", "und", "y", "e"}
+_ACRONYMS = {"IEEE", "ACM", "IET", "SIAM", "IFIP", "AAAI", "ACL", "IJCAI", "IJCNN", "NIPS", "NEURIPS",
+             "ICML", "ICLR", "KDD", "SIGKDD", "SIGCOMM", "USENIX", "IOT", "AI", "ML", "NLP", "IT", "ICT",
+             "USA", "UK", "EU", "MDPI", "PLOS", "BMC", "SPIE", "IAENG", "WSEAS", "CEUR", "LNCS", "AMIA",
+             "ICCCS", "ICT", "ISA", "IEICE", "JMLR", "PMLR", "ICC", "GLOBECOM", "INFOCOM", "CCS", "NDSS"}
+
+
+def unshout(text: str | None) -> str:
+    """'JOURNAL OF NETWORK SECURITY' -> 'Journal of Network Security' (Web of Science writes
+    venue names in capitals). Mixed-case text is returned unchanged."""
+    text = (text or "").strip()
+    letters = [c for c in text if c.isalpha()]
+    if not letters or not all(c.isupper() for c in letters) or len(letters) < 6:
+        return text
+    out = []
+    for i, word in enumerate(text.split()):
+        core = word.strip("()[],.:;&-")
+        if (core.upper() in _ACRONYMS or any(c.isdigit() for c in core)
+                or (word.startswith("(") and word.rstrip(".,;:").endswith(")"))):   # (COLCOM), (ICCCS)
+            out.append(word)
+        elif i > 0 and core.lower() in _MINOR:
+            out.append(word.lower())
+        else:
+            out.append("-".join(p[:1].upper() + p[1:].lower() for p in word.split("-")))
+    return " ".join(out)
+
+
+def page_range(first, last=None) -> str:
+    """'100', '110' -> '100-110'; keeps a single page or an article number as is."""
+    first, last = str(first or "").strip(), str(last or "").strip()
+    if first and last and last != first:
+        return f"{first}-{last}"
+    return first
+
+
 def classify_publication_type(*hints: str | None) -> str:
     """Map source-specific type labels to our small vocabulary."""
     text = " ".join(h for h in hints if h).lower()

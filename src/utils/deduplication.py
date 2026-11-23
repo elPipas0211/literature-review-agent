@@ -21,7 +21,8 @@ def merge_records(a: dict, b: dict) -> dict:
     """Merge two records describing the same paper; keeps the richer one as base."""
     base, other = (a, b) if _richness(a) >= _richness(b) else (b, a)
     merged = dict(base)
-    for field in ("abstract", "venue", "year", "openAccessPdf", "openalexId", "keywords", "note"):
+    for field in ("abstract", "venue", "year", "openAccessPdf", "openalexId", "keywords", "note",
+                  "volume", "issue", "pages"):
         if not merged.get(field) and other.get(field):
             merged[field] = other[field]
     merged["is_review"] = bool(a.get("is_review") or b.get("is_review"))

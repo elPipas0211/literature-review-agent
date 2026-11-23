@@ -7,7 +7,7 @@ import io
 import re
 from pathlib import Path
 
-from src.utils.records import classify_publication_type, detect_review, normalize_doi
+from src.utils.records import classify_publication_type, detect_review, normalize_doi, page_range, unshout
 
 csv.field_size_limit(10_000_000)
 
@@ -16,6 +16,8 @@ COLUMNS = {
         "title": ["Title"], "abstract": ["Abstract"], "doi": ["DOI"], "year": ["Year"],
         "citations": ["Cited by"], "authors_full": ["Author full names"], "authors": ["Authors"],
         "venue": ["Source title"], "type": ["Document Type"],
+        "volume": ["Volume"], "issue": ["Issue"], "page_start": ["Page start"], "page_end": ["Page end"],
+        "pages": ["Art. No."],
     },
     "wos": {
         "title": ["Article Title", "TI", "Title"], "abstract": ["Abstract", "AB"], "doi": ["DOI", "DI"],
@@ -23,11 +25,14 @@ COLUMNS = {
         "citations": ["Times Cited, All Databases", "Z9", "Times Cited, WoS Core", "TC"],
         "authors_full": ["Author Full Names", "AF"], "authors": ["Authors", "AU"],
         "venue": ["Source Title", "SO", "Full Journal Title"], "type": ["Document Type", "DT"],
+        "volume": ["Volume", "VL"], "issue": ["Issue", "IS"], "page_start": ["Start Page", "BP"],
+        "page_end": ["End Page", "EP"], "pages": ["Article Number", "AR"],
     },
     "zotero": {
         "title": ["Title"], "abstract": ["Abstract Note", "Abstract"], "doi": ["DOI"],
         "year": ["Publication Year", "Year"], "citations": [], "authors_full": [],
         "authors": ["Author", "Authors"], "venue": ["Publication Title", "Venue"],
+        "volume": ["Volume"], "issue": ["Issue"], "page_start": [], "page_end": [], "pages": ["Pages"],
         "type": ["Item Type", "Type"],
     },
 }
@@ -128,9 +133,13 @@ def parse_csv(path: str | Path) -> tuple[str, int, list[dict]]:
             "year": _int(_get(row, cmap["year"])),
             "citationCount": _int(_get(row, cmap["citations"])) if cmap["citations"] else None,
             "authors": parse_authors(_get(row, cmap["authors_full"]), _get(row, cmap["authors"]), fmt),
-            "venue": _get(row, cmap["venue"]),
+            "venue": unshout(_get(row, cmap["venue"])),
             "publicationType": classify_publication_type(doc_type),
             "openAccessPdf": None,
+            "volume": _get(row, cmap["volume"]),
+            "issue": _get(row, cmap["issue"]),
+            "pages": page_range(_get(row, cmap["page_start"]), _get(row, cmap["page_end"]))
+                     or _get(row, cmap["pages"]),
             "_source": f"{fmt}_csv",
         })
     return fmt, len(rows), records

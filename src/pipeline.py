@@ -19,13 +19,14 @@ from src.embeddings.model import get_embedder
 from src.embeddings.store import EmbeddingStore
 from src.evaluation.scoring import score_papers
 from src.filters.flags import compute_flags
+from src.importers.bibtex_import import looks_like_bibtex, parse_bibtex
 from src.importers.csv_import import parse_csv
 from src.keywords import extract_keywords
 from src.sources.openalex import OpenAlexClient
 from src.storage.project_manager import ProjectManager, discard_unfinished, track_sessions
 from src.utils.bibtex_exporter import export_bibtex
 from src.utils.deduplication import dedupe_batch, merge_records, match_library
-from src.utils.records import finalize_record
+from src.utils.records import finalize_record, get_doi
 
 Emit = Callable[[dict], None]
 
@@ -201,14 +202,20 @@ def run_import(project: str, csv_path: str, context: str | None, config: dict,
                emit: Emit = _noop, filename: str | None = None) -> dict:
     pm = ProjectManager(config["storage"]["projects_dir"])
     pm.init_project(project)
-    fmt, n_rows, records = parse_csv(csv_path)
-    source = f"{fmt}_csv"
-    emit({"type": "parse", "rows": n_rows, "format": fmt, "records": len(records)})
+    if looks_like_bibtex(csv_path):
+        fmt, n_rows, records = parse_bibtex(csv_path)
+        file_type = "bibtex"
+        source = "bibtex" if fmt == "bibtex" else f"{fmt}_bib"
+    else:
+        fmt, n_rows, records = parse_csv(csv_path)
+        file_type = "csv"
+        source = f"{fmt}_csv"
+    emit({"type": "parse", "rows": n_rows, "format": fmt, "file_type": file_type, "records": len(records)})
     session_id, session_path = pm.new_session(project, "import")
     pm.save_raw_results(session_path, source, records)
     session = {
         "session_id": session_id, "kind": "import", "started_at": datetime.now().isoformat(),
-        "file": filename or Path(csv_path).name, "format": fmt, "rows": n_rows,
+        "file": filename or Path(csv_path).name, "format": fmt, "file_type": file_type, "rows": n_rows,
         "sources": {source: {"retrieved": len(records), "error": None}},
     }
     return _ingest(pm, project, {source: records}, session, session_path, context, config, emit)
@@ -250,6 +257,42 @@ def refresh_keywords(project: str, config: dict, emit: Emit = _noop) -> dict:
                 p["keywords"] = fresh[p["id"]]
         pm.save_papers(project, library)
     return {"updated": len(fresh)}
+
+
+def _lacks_citation_details(p: dict) -> bool:
+    return bool(get_doi(p)) and not (p.get("volume") or p.get("pages"))
+
+
+def complete_citation_details(project: str, config: dict, emit: Emit = _noop) -> dict:
+    """
+    Fill volume / issue / pages (needed for APA references) from OpenAlex, by DOI,
+    for papers that lack them. Only empty fields are written; scores, flags and
+    PRISMA counts are untouched because no record is added.
+    """
+    pm = ProjectManager(config["storage"]["projects_dir"])
+    todo = [get_doi(p) for p in pm.get_papers(project) if _lacks_citation_details(p)]
+    emit({"type": "details", "count": len(todo)})
+    client = _openalex(config, emit)
+    found: dict[str, dict] = {}
+    for i in range(0, len(todo), 50):
+        found.update(client.biblio_by_doi(todo[i:i + 50]))
+        emit({"type": "details_progress", "done": min(i + 50, len(todo)), "total": len(todo)})
+    emit({"type": "stage", "message": "Saving…"})
+    updated = 0
+    with pm.lock(project):
+        library = pm.get_papers(project)
+        for p in library:
+            info = found.get(get_doi(p) or "")
+            if not info:
+                continue
+            changed = False
+            for field in ("volume", "issue", "pages", "openalexId"):
+                if info.get(field) and not p.get(field):
+                    p[field] = info[field]
+                    changed = changed or field != "openalexId"
+            updated += changed
+        pm.save_papers(project, library)
+    return {"checked": len(todo), "found": len(found), "updated": updated}
 
 
 def semantic_query(project: str, question: str, top: int, config: dict) -> list[dict]:

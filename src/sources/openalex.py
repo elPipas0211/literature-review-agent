@@ -12,13 +12,13 @@ from typing import Callable, Optional
 
 import requests
 
-from src.utils.records import classify_publication_type, detect_review, normalize_doi
+from src.utils.records import classify_publication_type, detect_review, normalize_doi, page_range
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.openalex.org/works"
 _SELECT = ("id,title,abstract_inverted_index,publication_year,cited_by_count,doi,"
-           "authorships,primary_location,type,open_access,referenced_works_count")
+           "authorships,primary_location,type,open_access,referenced_works_count,biblio")
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 _MAX_WAIT = 60  # seconds; never sleep longer than this on one retry
 
@@ -59,6 +59,9 @@ def _normalize(work: dict) -> dict:
         "publicationType": classify_publication_type(source.get("type"), work.get("type")),
         "is_review": detect_review(title, work.get("type")),
         "openAccessPdf": (work.get("open_access") or {}).get("oa_url"),
+        "volume": str((work.get("biblio") or {}).get("volume") or ""),
+        "issue": str((work.get("biblio") or {}).get("issue") or ""),
+        "pages": page_range((work.get("biblio") or {}).get("first_page"), (work.get("biblio") or {}).get("last_page")),
         "_source": "openalex",
     }
 
@@ -137,6 +140,24 @@ class OpenAlexClient:
         if year_from or year_to:
             params["filter"] = f"publication_year:{year_from or ''}-{year_to or ''}"
         return self._paginate(params, max_results)
+
+    # ── metadata for papers we already have ─────────────────────────────────
+    def biblio_by_doi(self, dois: list[str]) -> dict[str, dict]:
+        """{doi: {volume, issue, pages, openalexId}} for up to 50 DOIs in one request."""
+        dois = [d for d in dois if d and "|" not in d and "," not in d][:50]
+        if not dois:
+            return {}
+        data = self._get(BASE_URL, {"filter": "doi:" + "|".join(dois), "per_page": 50,
+                                    "select": "id,doi,biblio"})
+        out = {}
+        for w in data.get("results") or []:
+            doi = normalize_doi(w.get("doi"))
+            b = w.get("biblio") or {}
+            if doi:
+                out[doi] = {"volume": str(b.get("volume") or ""), "issue": str(b.get("issue") or ""),
+                            "pages": page_range(b.get("first_page"), b.get("last_page")),
+                            "openalexId": short_id(w.get("id"))}
+        return out
 
     # ── snowballing ─────────────────────────────────────────────────────────
     def find_work_id(self, doi: str | None = None, title: str | None = None) -> str | None:

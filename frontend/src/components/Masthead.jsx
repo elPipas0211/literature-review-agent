@@ -167,7 +167,7 @@ export default function Masthead({ projects, currentProject, onProjectChange, on
           onProjectsReload={onProjectsReload}
         />
         {currentProject && (
-          <button className="btn btn-ghost btn-sm" onClick={onImport}>Import CSV</button>
+          <button className="btn btn-ghost btn-sm" onClick={onImport}>Import file</button>
         )}
         <button className="btn btn-ghost btn-sm settings-btn" onClick={onSettings}
           title={needsKey ? 'No OpenAlex API key: searches may be rate-limited' : 'Settings'}>

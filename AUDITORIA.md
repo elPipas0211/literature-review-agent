@@ -178,3 +178,14 @@ Restricciones: interfaz en inglés, nada de pago (sin IA de pago); en lugar de r
 | **Botones `btn-ghost`** | Tenían texto crema pensado para el encabezado oscuro y casi no se veían en el resto de la app. Separado en variante de página y de encabezado. |
 | **Tests** | Backend: 18 (`pytest`). Frontend: 8 (`npm test`, Vitest): rescoring, métricas de validación, palabras clave emergentes, preferencias. |
 | **Inicio** | Pantalla de bienvenida con creación de proyecto y tarjetas, checklist en proyectos vacíos, encabezado compacto, pregunta de investigación plegable; títulos en Newsreader. |
+
+
+## 11. Ronda 4 (2026-11-23): BibTeX, APA y diseño
+
+| Cambio | Detalle |
+|---|---|
+| **Importar BibTeX** | Web of Science exporta en BibTeX. Nuevo lector propio, sin dependencias: llaves anidadas, valores entre comillas, `@string`, concatenación `#`, acentos LaTeX (`{\'{e}}`, `\v{s}`) y escapes (`\&`, `{[}`). Detecta Web of Science, Scopus o BibTeX genérico; PRISMA lo muestra como "Web of Science (BibTeX)". Acepta `.bib` y el `savedrecs.txt` de WoS. |
+| **Citas APA 7** | Referencia por paper (copiar con cursivas para Word) y cita en texto (`(Smith et al., 2021)`); exportación `.rtf` en orden alfabético con sangría francesa. Títulos a *sentence case* conservando siglas. |
+| **Volumen, número y páginas** | Se guardan desde OpenAlex, Scopus, WoS, Zotero y BibTeX. Para bibliotecas importadas antes, *Complete from OpenAlex* los rellena por DOI (probado en una copia de tu proyecto: 723 de 749). |
+| **Revistas en mayúsculas** | WoS escribe "JOURNAL OF NETWORK SECURITY"; se pasa a "Journal of Network Security" conservando siglas (IEEE, ACM…). |
+| **Diseño** | Encabezado con más aire; tarjetas de estadísticas con etiqueta y número separados y sin aspecto desactivado; botones de exportación centrados en 2 columnas. |

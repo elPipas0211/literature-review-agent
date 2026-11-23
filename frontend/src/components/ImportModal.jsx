@@ -39,7 +39,7 @@ export default function ImportModal({ project, projectContext, onClose, onDone }
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !running && handleClose()}>
       <div className="modal">
         <div className="modal-header">
-          <h2>Import CSV</h2>
+          <h2>Import a file</h2>
           <button className="modal-close" onClick={handleClose}>×</button>
         </div>
 
@@ -47,9 +47,14 @@ export default function ImportModal({ project, projectContext, onClose, onDone }
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]) }}
           onClick={() => fileRef.current?.click()}>
-          {file ? `📄 ${file.name}` : 'Drop a Scopus, Web of Science or Zotero export here, or click to browse'}
-          <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" onChange={(e) => pick(e.target.files?.[0])} />
+          {file ? `📄 ${file.name}` : 'Drop an export here, or click to browse'}
+          <input ref={fileRef} type="file" accept=".csv,.txt,.tsv,.bib,.bibtex" onChange={(e) => pick(e.target.files?.[0])} />
         </div>
+        <p className="hint">
+          Accepted: Scopus CSV or BibTeX · Web of Science BibTeX, tab-delimited or Excel-saved CSV · Zotero CSV or
+          BibTeX · any other BibTeX file. Abstracts and citation counts are kept when the export includes them
+          (in Web of Science choose “Full Record”).
+        </p>
 
         <div>
           <textarea className="input context-input" rows={2} style={{ width: '100%' }}

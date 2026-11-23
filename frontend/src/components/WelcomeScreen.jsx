@@ -119,7 +119,7 @@ export function EmptyProject({ hasQuestion, needsKey, onEditQuestion, onFocusSea
       text: 'English keywords work best, e.g. “anomaly detection time series”. Run several searches; duplicates are merged.',
       action: ['Go to search', onFocusSearch] },
     { done: false, title: 'Or import an export',
-      text: 'CSV from Scopus or Zotero, or a Web of Science file.', action: ['Import CSV', onImport] },
+      text: 'Scopus, Web of Science or Zotero export, as CSV or BibTeX.', action: ['Import file', onImport] },
   ]
   return (
     <div className="empty-project">

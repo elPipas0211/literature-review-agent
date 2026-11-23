@@ -157,7 +157,7 @@ h3 { font-size: 1rem;   font-weight: 600; }
   display: flex;
   align-items: center;
   gap: 20px;
-  padding: 10px 28px;
+  padding: 18px 28px 16px;
   border-bottom: 1px solid #000;
   flex-shrink: 0;
 }
@@ -175,15 +175,15 @@ h3 { font-size: 1rem;   font-weight: 600; }
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--masthead-fg);
-  line-height: 1;
+  line-height: 1.15;
 }
 
 .masthead-tagline {
   font-size: 9px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: rgba(245,240,232,0.5);
-  margin-top: 4px;
+  color: rgba(245,240,232,0.55);
+  margin-top: 6px;
   font-weight: 400;
 }
 
@@ -639,31 +639,34 @@ h3 { font-size: 1rem;   font-weight: 600; }
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* STAT CARDS                                                                   */
 /* ─────────────────────────────────────────────────────────────────────────── */
-.stat-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.stat-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
 .stat-card {
   background: var(--cream);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px 11px;
+  border-radius: var(--radius-md);
+  padding: 11px 13px 10px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 68px;
 }
 .stat-card-label {
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-faint);
-  line-height: 1;
+  line-height: 1.2;
 }
 .stat-card-number {
   font-family: var(--font-display);
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.05;
+  font-size: 1.65rem;
+  font-weight: 600;
+  line-height: 1;
   color: var(--ink);
+  font-variant-numeric: lining-nums tabular-nums;
 }
 .stat-card.relevant  .stat-card-number { color: var(--relevant); }
 .stat-card.potential .stat-card-number { color: var(--potential); }
@@ -1092,7 +1095,15 @@ input[type="range"]::-moz-range-thumb {
 .prisma-table tr.sum td { font-weight: 600; color: var(--ink); }
 .session-list { list-style: none; font-size: 11px; color: var(--ink-muted); display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .session-date { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
-.export-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.export-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.export-grid .btn, .sidebar-section > .btn { justify-content: center; }
+.sidebar-sublabel { font-size: 10.5px; color: var(--ink-faint); margin-top: 2px; }
+.section-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.section-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; text-transform: none; letter-spacing: 0; }
+.apa-reference {
+  font-family: var(--font-display); font-size: 14.5px; line-height: 1.6; color: var(--ink);
+  padding-left: 2em; text-indent: -2em; word-break: break-word;
+}
 .clickable { cursor: pointer; }
 .clickable:hover .query-result-title { text-decoration: underline; }
 .doi-row { flex-wrap: wrap; gap: 8px; }
@@ -1127,7 +1138,8 @@ button.kw-chip:hover { border-color: var(--border-dark); color: var(--ink); }
 .reuse-btn { font-size: 10.5px; margin-left: 6px; }
 button.stat-card { text-align: left; font-family: var(--font-body); }
 button.stat-card.clickable:hover:not(:disabled) { border-color: var(--border-dark); box-shadow: var(--shadow); }
-button.stat-card:disabled { cursor: default; opacity: 0.6; }
+button.stat-card { cursor: default; }
+button.stat-card.clickable { cursor: pointer; }
 .error-box {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   background: var(--error-bg); color: var(--error);
