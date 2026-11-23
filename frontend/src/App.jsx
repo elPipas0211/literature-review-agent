@@ -17,6 +17,7 @@ import SearchPanel   from './components/SearchPanel.jsx'
 import SemanticQuery from './components/SemanticQuery.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import Sidebar       from './components/Sidebar.jsx'
+import SummaryView   from './components/SummaryView.jsx'
 import TrendsView    from './components/TrendsView.jsx'
 import ValidationView from './components/ValidationView.jsx'
 import WelcomeScreen, { EmptyProject } from './components/WelcomeScreen.jsx'
@@ -31,6 +32,7 @@ const TABS = [
   { key: 'library', label: 'Papers' },
   { key: 'map',     label: 'Map' },
   { key: 'trends',  label: 'Trends' },
+  { key: 'summary', label: 'Summary' },
   { key: 'query',   label: 'Ask' },
   { key: 'validate', label: 'Validate' },
 ]
@@ -118,7 +120,8 @@ export default function App() {
       ? scopedPapers.filter((p) => (p.evaluation?.category || 'unevaluated') === categoryFilter)
       : scopedPapers
     const key = SORTERS[sortBy] || SORTERS.score
-    return [...papers].sort((a, b) => key(b) - key(a))
+    // Starred papers (reading list) always come first, then the chosen order.
+    return [...papers].sort((a, b) => (Number(!!b.starred) - Number(!!a.starred)) || key(b) - key(a))
   }, [scopedPapers, categoryFilter, sortBy])
 
   function loadProjects() {
@@ -323,6 +326,9 @@ export default function App() {
               )}
               {activeTab === 'trends' && (
                 <TrendsView papers={allPapers} clusters={clusters} onShowCluster={showCluster} onOpen={openById} />
+              )}
+              {activeTab === 'summary' && (
+                <SummaryView project={project} papers={allPapers} visibleIds={displayPapers.map((p) => p.id)} onOpen={openById} />
               )}
               {activeTab === 'query' && <SemanticQuery project={project} onOpen={openById} />}
               {activeTab === 'validate' && filterSettings && (

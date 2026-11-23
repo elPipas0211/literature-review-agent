@@ -94,9 +94,25 @@ file. Choose *Full Record* in Web of Science so abstracts and citation counts co
 LaTeX (accents, `\&`, `{[}`) is converted to plain text, and Web of Science's all-capital
 journal names are written in title case.
 
+### Summary tab and reading CSV
+
+- **Summary** builds an overview of a set of papers (relevant + potential, whole library, reading
+  list, reading list + relevant, or the current view): papers per year, main venues and authors,
+  most cited, and for each topic (cluster) the sentences that best represent it, quoted from the
+  abstracts with their APA in-text citation; then surveys, the reading list with notes, and one key
+  sentence per paper. **Download** saves it as `.html` (opens in Word); **Copy as text** gives a
+  Markdown version you can paste into a chat assistant for a written synthesis. It is
+  *extractive*: every sentence comes word for word from an abstract, chosen with the local
+  embedding model; nothing is generated.
+- **CSV · ★ starred + relevant** (top of Export) downloads one row per paper — starred first, then
+  relevant — with title, abstract, `key_sentence` (the sentence closest to your research question),
+  keywords, topic, notes, `apa_in_text` and `apa`. Key sentences are cached, so only the first
+  export reads all the abstracts.
+- Starred papers always appear first in the Papers list, whatever the sort.
+
 ### APA 7 citations
 
-Open a paper: **Cite — APA 7** shows its reference with **Copy reference** (keeps the italics
+Open a paper: **Cite — APA 7** (right under the title) shows its reference with **Copy reference** (keeps the italics
 when pasted into Word or Google Docs) and **Copy in-text** — e.g. `(Smith et al., 2021)`. The
 **APA** export button downloads a reference list as `.rtf` (alphabetical, hanging indent,
 italics), for the whole library, the current view or the reading list. Titles are put in
@@ -206,6 +222,7 @@ src/evaluation/scoring.py relevance score
 src/filters/flags.py      quality flags
 src/clustering.py         K-Means + elbow + labels + 2-D t-SNE map
 src/keywords.py           per-paper keyphrases (KeyBERT, local) and distinctive cluster labels
+src/summary.py            extractive library summary and per-paper key sentences
 backend/                  FastAPI (SSE streaming for long runs; closing the stream cancels the run)
 frontend/                 React + Vite
 frontend/src/scoring.js   live rescoring (mirrors src/evaluation/scoring.py)

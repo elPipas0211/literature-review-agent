@@ -8,17 +8,18 @@ CSV and RIS exports for screening / reference tools.
 import csv
 import io
 
-from src.utils.apa import apa_text
+from src.utils.apa import apa_in_text, apa_text
 
 _RIS_TYPES = {"article": "JOUR", "conference": "CONF", "chapter": "CHAP", "book": "BOOK",
               "thesis": "THES", "preprint": "UNPB", "other": "GEN"}
 
-CSV_COLUMNS = ["id", "title", "abstract", "authors", "year", "venue", "doi", "url",
-               "publication_type", "citations", "similarity", "semantic_score", "score",
-               "category", "is_review", "starred", "validation", "note", "apa", "keywords", "flags", "sources", "queries"]
+CSV_COLUMNS = ["id", "title", "abstract", "key_sentence", "keywords", "topic", "authors", "year", "venue",
+               "doi", "url", "publication_type", "citations", "category", "score", "semantic_score",
+               "similarity", "is_review", "starred", "note", "validation", "apa_in_text", "apa",
+               "flags", "sources", "queries"]
 
 
-def _row(p: dict) -> dict:
+def _row(p: dict, topics: dict[str, str] | None = None) -> dict:
     ev = p.get("evaluation") or {}
     doi = (p.get("externalIds") or {}).get("DOI") or ""
     return {
@@ -40,6 +41,9 @@ def _row(p: dict) -> dict:
         "starred": "yes" if p.get("starred") else "",
         "validation": p.get("validation") or "",
         "apa": apa_text(p),
+        "apa_in_text": apa_in_text(p),
+        "key_sentence": p.get("key_sentence") or "",
+        "topic": (topics or {}).get(p.get("id"), ""),
         "note": p.get("note") or "",
         "keywords": "; ".join(p.get("keywords") or []),
         "flags": "; ".join(p.get("flags") or []),
@@ -48,12 +52,13 @@ def _row(p: dict) -> dict:
     }
 
 
-def to_csv(papers: list[dict]) -> str:
+def to_csv(papers: list[dict], topics: dict[str, str] | None = None) -> str:
+    """`topics` maps paper id -> cluster label (empty when clusters were not generated)."""
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS)
     writer.writeheader()
     for p in papers:
-        writer.writerow(_row(p))
+        writer.writerow(_row(p, topics))
     return "﻿" + buf.getvalue()
 
 

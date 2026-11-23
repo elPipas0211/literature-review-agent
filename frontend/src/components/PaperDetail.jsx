@@ -66,6 +66,27 @@ export default function PaperDetail({ paper, onClose, onSnowball, busy, onAnnota
         {authors && <p className="detail-meta">{authors}</p>}
         {paper.venue && <p className="detail-meta" style={{ fontStyle: 'italic' }}>{paper.venue}</p>}
 
+        {paper.apa ? (
+          <div className="cite-box">
+            <div className="detail-section-label section-row">
+              <span>Cite — APA 7</span>
+              <span className="section-actions">
+                <button className="btn btn-outline btn-sm" onClick={copyInText}>
+                  {copied === 'intext' ? 'Copied!' : `Copy in-text ${paper.apa.in_text}`}</button>
+                <button className="btn btn-outline btn-sm" onClick={copyApa}>{copied === 'apa' ? 'Copied!' : 'Copy reference'}</button>
+              </span>
+            </div>
+            {/* html comes from the backend with every text run escaped; only <i> tags are added */}
+            <p className="apa-reference" dangerouslySetInnerHTML={{ __html: paper.apa.html }} />
+            <p className="hint">Titles are put in sentence case automatically; check the capitals of proper nouns.
+              {!paper.volume && !paper.pages && ' Volume and pages are missing from the source, so they are left out.'}</p>
+          </div>
+        ) : (
+          <p className="hint cite-box">The APA citation appears here once the app is restarted
+            (<code>stop.bat</code>, then <code>start.bat</code>).</p>
+        )}
+
+
         <KeywordChips keywords={paper.keywords} onKeyword={onKeyword} />
 
         <div>
@@ -117,23 +138,6 @@ export default function PaperDetail({ paper, onClose, onSnowball, busy, onAnnota
           <p className="detail-meta">Sources: {(paper._sources || []).map((s) => SOURCE[s] || s).join(', ')}</p>
           {queries.length > 0 && <p className="detail-meta">Found by: {queries.map((q) => `“${q}”`).join(', ')}</p>}
         </div>
-
-        {paper.apa && (
-          <div>
-            <div className="detail-section-label section-row">
-              <span>Cite — APA 7</span>
-              <span className="section-actions">
-                <button className="btn btn-outline btn-sm" onClick={copyInText}>
-                  {copied === 'intext' ? 'Copied!' : `Copy in-text ${paper.apa.in_text}`}</button>
-                <button className="btn btn-outline btn-sm" onClick={copyApa}>{copied === 'apa' ? 'Copied!' : 'Copy reference'}</button>
-              </span>
-            </div>
-            {/* html comes from the backend with every text run escaped; only <i> tags are added */}
-            <p className="apa-reference" dangerouslySetInnerHTML={{ __html: paper.apa.html }} />
-            <p className="hint">Titles are put in sentence case automatically; check the capitals of proper nouns.
-              {!paper.volume && !paper.pages && ' Volume and pages are missing from the source, so they are left out.'}</p>
-          </div>
-        )}
 
         <div>
           <div className="detail-section-label section-row">

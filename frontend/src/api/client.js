@@ -41,8 +41,8 @@ export const queryPapers   = (project, question, top = 10) =>
   req(`/projects/${enc(project)}/query`, json('POST', { question, top }))
 
 /** Download an export (csv | ris | bib). `ids` = null exports the whole library. */
-export async function downloadExport(project, format, ids = null) {
-  const res = await fetch(`${BASE}/projects/${enc(project)}/export`, json('POST', { format, ids }))
+export async function downloadExport(project, format, ids = null, opts = {}) {
+  const res = await fetch(`${BASE}/projects/${enc(project)}/export`, json('POST', { format, ids, ...opts }))
   if (!res.ok) throw new Error(await errorMessage(res))
   const blob = await res.blob()
   const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1]
@@ -102,6 +102,12 @@ export const drawValidationSample = (project, size) =>
 
 export const streamCompleteDetails = (project, signal) =>
   sse(`/projects/${enc(project)}/complete-details`, { ...json('POST', {}), signal })
+
+export const streamSummary = (project, ids, signal) =>
+  sse(`/projects/${enc(project)}/summary`, { ...json('POST', { ids }), signal })
+
+export const streamKeySentences = (project, ids, signal) =>
+  sse(`/projects/${enc(project)}/key-sentences`, { ...json('POST', { ids }), signal })
 
 export const annotatePaper = (project, id, fields) =>
   req(`/projects/${enc(project)}/annotate`, json('POST', { id, ...fields }))

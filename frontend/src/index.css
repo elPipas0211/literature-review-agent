@@ -1345,3 +1345,30 @@ kbd {
 }
 .segmented button + button { border-left: 1px solid var(--border); }
 .segmented button.active { background: var(--ink); color: var(--cream); }
+.cite-box {
+  background: var(--cream-dark); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 10px 14px 8px;
+}
+.cite-box .detail-section-label { margin-bottom: 6px; }
+.cite-box .apa-reference { font-size: 14px; margin: 0; }
+
+/* ── Summary ─────────────────────────────────────────────────────────────── */
+.summary-report { display: flex; flex-direction: column; gap: 26px; }
+.summary-controls { flex-wrap: wrap; }
+.summary-controls .spinner { display: inline-block; vertical-align: -1px; margin-right: 4px; }
+.rank-list { list-style: none; counter-reset: r; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.rank-list li { display: flex; gap: 8px; counter-increment: r; }
+.rank-list li::before { content: counter(r) "."; color: var(--ink-faint); min-width: 1.4em; }
+.rank-list li span:first-child { flex: 1; }
+.rank-list .num { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.topic-summary {
+  background: var(--cream-light); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.topic-summary h4 { font-family: var(--font-display); font-size: 1.08rem; }
+.quote-list { list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.55; color: var(--ink-muted); }
+.quote-list li { padding-left: 12px; border-left: 2px solid var(--border-dark); }
+.quote-list.per-paper li div { margin-top: 2px; }
+.cite-link { white-space: nowrap; color: var(--ink); }
+.inline-h3 { display: inline; font-size: 1rem; }
+details > summary { cursor: pointer; }

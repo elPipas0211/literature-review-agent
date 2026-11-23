@@ -347,3 +347,17 @@ def test_apa_reference_and_in_text():
     rtf = reference_list_rtf([conf, art])
     assert rtf.startswith(r"{\rtf1") and rtf.index("Doe") < rtf.index("Smith")   # alphabetical
     assert r"Garc\u237?a" in rtf and r"{\i IEEE Access}" in rtf
+
+
+def test_summary_sentence_split_and_csv_columns():
+    from src.summary import split_sentences
+    abstract = ("Intrusion detection is hard. We compare five classifiers on NSL-KDD and report accuracy, "
+                "precision and recall for each one. Random forest gives the best F1 score on the test split. "
+                "© 2021 Elsevier Ltd. All rights reserved.")
+    sents = split_sentences(abstract)
+    assert sents[0].startswith("We compare") and len(sents) == 2      # short and boilerplate dropped
+    p = rec(title="T", authors=[{"name": "Smith, J."}], year=2020, externalIds={"DOI": "10.1/z"})
+    p.update(key_sentence="Random forest wins.", keywords=["random forest"], starred=True)
+    header, row = to_csv([p], {p["id"]: "classifiers"}).lstrip("﻿").splitlines()[:2]
+    assert header.startswith("id,title,abstract,key_sentence,keywords,topic")
+    assert "Random forest wins." in row and "classifiers" in row and "(Smith, 2020)" in row

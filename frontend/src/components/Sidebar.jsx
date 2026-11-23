@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { downloadExport, streamClusters, streamCompleteDetails, streamRefreshKeywords } from '../api/client.js'
+import { downloadExport, streamClusters, streamCompleteDetails, streamKeySentences, streamRefreshKeywords } from '../api/client.js'
 
 import { SOURCE_LABELS as SOURCE } from '../sources.js'
 
@@ -76,8 +76,22 @@ function Prisma({ prisma, onReuseSearch }) {
 
 const FORMATS = [['csv', 'CSV'], ['ris', 'RIS'], ['bib', 'BibTeX'], ['apa', 'APA']]
 
-function Exports({ project, total, visibleIds, starredIds, missingDetails, onReload }) {
+function Exports({ project, total, visibleIds, starredIds, readingIds, missingDetails, onReload }) {
   const [error, setError] = useState(null)
+  const [preparing, setPreparing] = useState(false)
+  // Key sentences are computed (and cached) first with a progress stream, then the CSV downloads.
+  const exportReading = async () => {
+    setPreparing('Starting…'); setError(null)
+    try {
+      for await (const ev of streamKeySentences(project, readingIds)) {
+        if (ev.type === 'summary_progress') setPreparing(`Reading abstracts… ${Math.round((ev.done / ev.total) * 100)}%`)
+        if (ev.type === 'error') throw new Error(ev.message)
+      }
+      setPreparing('Downloading…')
+      await downloadExport(project, 'csv', readingIds)
+      onReload()
+    } catch (e) { setError(e.message) } finally { setPreparing(false) }
+  }
   const [details, setDetails] = useState(null)
   const completeDetails = async () => {
     setDetails('Starting…')
@@ -100,6 +114,17 @@ function Exports({ project, total, visibleIds, starredIds, missingDetails, onRel
   return (
     <section className="sidebar-section">
       <div className="sidebar-label">Export</div>
+      {readingIds.length > 0 && (
+        <>
+          <button className="btn btn-primary btn-sm" disabled={preparing} onClick={exportReading}
+            title="Starred papers first, then the relevant ones, with title, abstract, key sentence, keywords, topic, notes and APA">
+            {preparing || `CSV · ★ starred + relevant (${readingIds.length})`}
+          </button>
+          <p className="hint">One row per paper: title, abstract, the sentence closest to your research question,
+            keywords, topic, your notes and the APA citation. Opens in Excel. The first time it reads every
+            abstract (about 1–2 minutes for 600 papers); after that it is instant.</p>
+        </>
+      )}
       <div className="export-grid">
         {FORMATS.map(([fmt, label]) => (
           <button key={fmt} className="btn btn-outline btn-sm" disabled={!total}
@@ -268,6 +293,9 @@ export default function Sidebar({
       {project && <Exports project={project} total={papers.length} visibleIds={visibleIds}
         starredIds={papers.filter((p) => p.starred).map((p) => p.id)}
         missingDetails={papers.filter((p) => p.externalIds?.DOI && !p.volume && !p.pages).length}
+        readingIds={[...papers].filter((p) => p.starred || p.evaluation?.category === 'relevante')
+          .sort((a, b) => (Number(!!b.starred) - Number(!!a.starred)) || (b.evaluation?.score ?? 0) - (a.evaluation?.score ?? 0))
+          .map((p) => p.id)}
         onReload={onClustersGenerated} />}
       <div className="divider" />
       <ClusterFilter clusters={clusters} activeCluster={activeCluster} onSelect={onClusterSelect}

@@ -189,3 +189,14 @@ Restricciones: interfaz en inglés, nada de pago (sin IA de pago); en lugar de r
 | **Volumen, número y páginas** | Se guardan desde OpenAlex, Scopus, WoS, Zotero y BibTeX. Para bibliotecas importadas antes, *Complete from OpenAlex* los rellena por DOI (probado en una copia de tu proyecto: 723 de 749). |
 | **Revistas en mayúsculas** | WoS escribe "JOURNAL OF NETWORK SECURITY"; se pasa a "Journal of Network Security" conservando siglas (IEEE, ACM…). |
 | **Diseño** | Encabezado con más aire; tarjetas de estadísticas con etiqueta y número separados y sin aspecto desactivado; botones de exportación centrados en 2 columnas. |
+
+
+## 12. Ronda 5 (2026-11-23): resumen, CSV de lectura y favoritos
+
+| Cambio | Detalle |
+|---|---|
+| **Favoritos primero** | Los papers con ★ salen siempre arriba en la lista, con cualquier orden. |
+| **Cita APA visible** | La sección *Cite — APA 7* pasó justo debajo del título del paper. Si el backend no se ha reiniciado, avisa que hay que correr `stop.bat` y `start.bat` (era la causa de no verla). |
+| **Pestaña Summary** | Resumen **extractivo** y local (sin IA de pago): por año, revistas, autores, más citados, y por tema las frases de los abstracts más cercanas al centro del cluster, cada una con su cita APA en texto; luego surveys, lista de lectura y una frase clave por paper. Descargable en `.html` (Word) o copiable como texto. Probado en una copia del proyecto: 642 papers en ~19 s. |
+| **CSV de lectura** | *CSV · ★ starred + relevant*: título, abstract, frase clave (la más cercana a la pregunta de investigación), palabras clave, tema, notas y cita APA. Las frases clave se guardan en caché (se recalculan si cambia la pregunta). |
+| **Copyright en abstracts** | Scopus/WoS pegan "© 2021 Elsevier…" a la última frase; se corta antes de dividir, para no perder esa frase. |

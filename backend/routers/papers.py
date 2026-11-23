@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Literal
 
@@ -10,6 +11,7 @@ from backend.config import get_config
 from src.pipeline import (annotate, complete_citation_details, draw_validation_sample, prisma_summary,
                           run_snowball)
 from src.utils.bibtex_exporter import export_bibtex, library_bibtex
+from src.summary import build_summary, fill_key_sentences
 from src.utils.apa import apa_html, apa_in_text, apa_text, reference_list_rtf
 from src.utils.exporters import to_csv, to_ris
 
@@ -33,9 +35,19 @@ def get_prisma(project: str):
     return prisma_summary(project, get_config())
 
 
+def _topics(pm, project: str) -> dict[str, str]:
+    """paper id -> cluster label, for the CSV `topic` column."""
+    path = pm.clusters_path(project)
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {pid: c.get("label", "") for c in data.get("clusters", []) for pid in c.get("paper_ids", [])}
+
+
 class ExportRequest(BaseModel):
     format: Literal["csv", "ris", "bib", "apa"]
     ids: list[str] | None = None  # None = whole library
+    key_sentences: bool = False   # CSV: compute the sentence of each abstract closest to the question
 
 
 _MEDIA = {"csv": "text/csv; charset=utf-8", "ris": "application/x-research-info-systems",
@@ -45,6 +57,8 @@ _MEDIA = {"csv": "text/csv; charset=utf-8", "ris": "application/x-research-info-
 @router.post("/{project}/export")
 def export(project: str, req: ExportRequest):
     pm = require_project(project)
+    if req.format == "csv" and req.key_sentences:
+        fill_key_sentences(project, get_config(), req.ids)   # cached: slow only the first time
     library = pm.get_papers(project)
     wanted = set(req.ids) if req.ids is not None else None
     if req.format == "bib":
@@ -57,7 +71,7 @@ def export(project: str, req: ExportRequest):
         if req.format == "apa":
             body = reference_list_rtf(papers)  # alphabetical, as APA requires
         else:
-            body = to_csv(papers) if req.format == "csv" else to_ris(papers)
+            body = to_csv(papers, _topics(pm, project)) if req.format == "csv" else to_ris(papers)
     ext = "rtf" if req.format == "apa" else req.format
     suffix = "_APA_references" if req.format == "apa" else ""
     filename = f"{project}{suffix}_{datetime.now():%Y%m%d}.{ext}"
@@ -112,3 +126,25 @@ async def complete_details(project: str):
     """Fill missing volume / issue / pages from OpenAlex (streams progress)."""
     require_project(project)
     return sse_job(lambda emit: complete_citation_details(project, get_config(), emit))
+
+
+class SummaryRequest(BaseModel):
+    ids: list[str] | None = None  # None = whole library
+
+
+@router.post("/{project}/summary")
+async def summary(project: str, req: SummaryRequest):
+    """Extractive overview of a set of papers (streams progress; nothing is saved)."""
+    require_project(project)
+    return sse_job(lambda emit: build_summary(project, get_config(), req.ids, emit))
+
+
+class KeySentenceRequest(BaseModel):
+    ids: list[str] | None = None
+
+
+@router.post("/{project}/key-sentences")
+async def key_sentences(project: str, req: KeySentenceRequest):
+    """Compute (and cache) each paper's sentence closest to the research question, with progress."""
+    require_project(project)
+    return sse_job(lambda emit: {"computed": fill_key_sentences(project, get_config(), req.ids, emit)})
